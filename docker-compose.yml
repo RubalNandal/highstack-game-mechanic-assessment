@@ -1,0 +1,32 @@
+services:
+  engine:
+    build: ./engine
+    ports:
+      - "4000:4000"
+    environment:
+      PORT: "4000"
+      OPERATOR_URL: ${OPERATOR_URL:-http://host.docker.internal:3000}
+      OPERATOR_KEY: dev-operator-key
+      WEBHOOK_SECRET: dev-webhook-secret
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  postgres:
+    image: postgres:16
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: operator
+      POSTGRES_PASSWORD: operator
+      POSTGRES_DB: operator
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U operator -d operator"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  postgres-data:

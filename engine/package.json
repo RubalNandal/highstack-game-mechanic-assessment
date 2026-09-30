@@ -1,0 +1,17 @@
+{
+  "name": "crashsim",
+  "version": "1.0.0",
+  "description": "Simulated third-party crash game engine",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
