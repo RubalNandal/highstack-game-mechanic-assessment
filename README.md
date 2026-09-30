@@ -191,7 +191,7 @@ Seed a few players with a starting balance. A simple player picker is fine — y
 
 ## Time
 
-Stop at **4 hours**. Unfinished work is fine. Tell us what you would do next.
+You have **3 days** from the day you get this brief. Unfinished work is fine. Tell us what you would do next.
 
 ## AI tools
 
