@@ -1,32 +1,85 @@
-services:
-  engine:
-    build: ./engine
-    ports:
-      - "4000:4000"
-    environment:
-      PORT: "4000"
-      OPERATOR_URL: ${OPERATOR_URL:-http://host.docker.internal:3000}
-      OPERATOR_KEY: dev-operator-key
-      WEBHOOK_SECRET: dev-webhook-secret
-      LOG_LEVEL: ${LOG_LEVEL:-info}
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+x-app: &app
+  build: .
+  image: highstack-assessment:local
+  init: true
 
+services:
   postgres:
-    image: postgres:16
-    ports:
-      - "5432:5432"
+    image: postgres:16-alpine
     environment:
       POSTGRES_USER: operator
       POSTGRES_PASSWORD: operator
       POSTGRES_DB: operator
+    ports:
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U operator -d operator"]
       interval: 2s
       timeout: 3s
-      retries: 20
+      retries: 30
+
+  operator:
+    <<: *app
+    ports:
+      - "127.0.0.1:${DEMO_PORT:-3100}:3000"
+    environment:
+      DATABASE_URL: postgres://operator:operator@postgres:5432/operator
+      ENGINE_URL: http://engine:4000
+      OPERATOR_KEY: ${OPERATOR_KEY:-dev-operator-key}
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:-dev-webhook-secret}
+    volumes:
+      - ./configs:/app/configs:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  engine:
+    <<: *app
+    command: ["node", "engine/src/index.js"]
+    environment:
+      DATABASE_URL: postgres://operator:operator@postgres:5432/operator
+      OPERATOR_URL: http://operator:3000
+      OPERATOR_KEY: ${OPERATOR_KEY:-dev-operator-key}
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:-dev-webhook-secret}
+      DUPLICATE_WEBHOOKS: ${DUPLICATE_WEBHOOKS:-0}
+      DROP_WS_EVERY: ${DROP_WS_EVERY:-0}
+      REORDER: ${REORDER:-0}
+      CASHOUT_TIMEOUT: ${CASHOUT_TIMEOUT:-0}
+    volumes:
+      - ./configs:/app/configs:ro
+    depends_on:
+      operator:
+        condition: service_healthy
+
+  test-db:
+    image: postgres:16-alpine
+    profiles: [test]
+    environment:
+      POSTGRES_USER: operator
+      POSTGRES_PASSWORD: operator
+      POSTGRES_DB: assessment_test
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U operator -d assessment_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  tests:
+    <<: *app
+    profiles: [test]
+    command: ["sh", "-c", "npm test && npm run test:integration"]
+    environment:
+      TEST_DATABASE_URL: postgres://operator:operator@test-db:5432/assessment_test
+    depends_on:
+      test-db:
+        condition: service_healthy
 
 volumes:
   postgres-data:
