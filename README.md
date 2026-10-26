@@ -1,202 +1,113 @@
-# HighStack — Full-Stack Take-Home: Crash Engine Proxy
+# HighStack — Game Mechanic Assessment
 
-HighStack runs an online casino. Most games come from third-party providers. The provider runs the game. We, the **operator**, own the players and their money.
+A deterministic, configurable bonus added to the supplied crash game. It includes the missing wallet receiver and player client, persistent round replay, and tests for the mechanic and money handling. The original brief shipped with the starter is preserved in [docs/STARTER_README.md](docs/STARTER_README.md).
 
-This repo contains **crashsim**, a small crash game engine. It acts like a third-party provider. Your job is to build the operator side: a service that talks to crashsim, and a small player client.
-
-In a crash game, a multiplier starts at 1.00x and grows. At a random point it "crashes". A player bets before the round starts. The player wins `bet × multiplier` if they cash out before the crash. If not, they lose the bet.
-
-## Run
-
-You need Docker.
+## Run and demonstrate
 
 ```sh
-docker compose up
+docker compose up --build
 ```
 
-This starts:
+Open **http://localhost:3100**. The demo player starts with **$1,000.00**. Place a bet during the five-second betting window, then cash out manually or set an automatic target. The final result shows base winnings, bonus, cap and payment status. After the round ends, select **Replay** to verify the saved outcome.
 
-| Service    | Port | Notes                                                          |
-| ---------- | ---- | -------------------------------------------------------------- |
-| `engine`   | 4000 | crashsim                                                       |
-| `postgres` | 5432 | Postgres 16. User, password and database are all `operator`. |
+The example cards demonstrate no bonus, configured multipliers and the win cap using the same calculation as live play. They never alter the wallet. A bonus occurs with the configured probability in live rounds, so examples make every branch easy to inspect.
 
-The engine sends wallet calls to `OPERATOR_URL`. The default is `http://host.docker.internal:3000`, so it reaches a service on port 3000 of your machine. If you run your operator inside Docker Compose, change `OPERATOR_URL` (for example `http://operator:3000`).
+Postgres data survives normal restarts. Seeding never resets an existing balance. Only the demo website and database are published to localhost; the engine and its operator key stay inside the Docker network. To change the website port, set `DEMO_PORT` in `.env` using `.env.example`.
 
-Engine settings:
+## Verify
 
-| Variable         | Value                |
-| ---------------- | -------------------- |
-| `OPERATOR_KEY`   | `dev-operator-key`   |
-| `WEBHOOK_SECRET` | `dev-webhook-secret` |
+Run the unit and Postgres integration suites in an isolated test database:
 
-To run the engine without Docker: `cd engine && npm install && npm start` (Node 22+).
-
-## Engine spec
-
-### Round cycle
-
-Rounds run one after another, forever.
-
-1. **betting** — 5 seconds. Bets are accepted.
-2. **running** — the multiplier grows from 1.00. Cash-outs are accepted.
-3. **crashed** — the multiplier stops at the crash point. Active bets that did not cash out are lost. After 3 seconds, the next round starts.
-
-The multiplier at `t` milliseconds after the start is:
-
-```
-multiplier(t) = floor(100 * e^(0.00006 * t)) / 100
+```sh
+docker compose --profile test run --build --rm tests
 ```
 
-Amounts are integers in minor units (cents). Multipliers have 2 decimals.
+With the demo running, Node 22+ can exercise a live bet, duplicate request, wallet balance and replay:
 
-### REST API
-
-Base URL: `http://localhost:4000`. Every request must send the header `x-operator-key`. If the key is missing or wrong, the engine returns `401`. Bodies are JSON.
-
-| Method | Path                    | Body                                            | Success response                                                                  |
-| ------ | ----------------------- | ----------------------------------------------- | --------------------------------------------------------------------------------- |
-| POST   | `/players/:id/session`  | —                                               | `{ sessionId }`                                                                   |
-| POST   | `/bets`                 | `{ sessionId, roundId, amount, autoCashout? }`  | `{ betId, status }`                                                               |
-| POST   | `/bets/:id/cashout`     | —                                               | `{ betId, status: "cashed_out", multiplier, payout }`                             |
-| GET    | `/bets/:id`             | —                                               | `{ betId, playerId, roundId, amount, status, autoCashout?, multiplier?, payout? }` |
-| GET    | `/rounds/current`       | —                                               | `{ roundId, state, seq, serverSeedHash, bettingEndsAt?, startedAt?, multiplier?, crashPoint?, serverSeed? }` |
-
-Details:
-
-- **`/players/:id/session`** — `:id` is your player id (`[A-Za-z0-9_-]`, 1–64 characters). A bet needs a session.
-- **`POST /bets`** — only during `betting`, and only for the current `roundId`. `amount` is an integer from 1 to 1,000,000,000. `autoCashout` is optional: a multiplier from 1.01, with at most 2 decimals. Before the engine accepts the bet, it calls your **debit** webhook and waits for the answer.
-  - Debit returns `200` → `200 { betId, status: "active" }`.
-  - Debit returns `402` → `402 { error: "insufficient_funds", betId, status: "rejected" }`.
-  - Debit fails → `502 { error: "wallet_unavailable", betId, status: "rejected" }`.
-- **`POST /bets/:id/cashout`** — only while the round is `running`. The engine locks the current multiplier (the value of the last `tick`). `payout = floor(amount * multiplier)`. The engine then calls your **credit** webhook with the payout.
-- **Auto cash-out** — when the multiplier reaches `autoCashout`, the bet cashes out at exactly `autoCashout`. If the round crashes at or below `autoCashout`, the bet is lost.
-- **Bet status** — `pending` (waiting for debit), `active`, `cashed_out`, `lost`, `rejected`.
-- **`/rounds/current`** — `seq` is the `seq` of the last stream event.
-
-Errors have the shape `{ error, message? }`:
-
-| Status | `error`                                                          |
-| ------ | ---------------------------------------------------------------- |
-| 400    | `invalid_request`                                                |
-| 401    | `unauthorized`                                                   |
-| 402    | `insufficient_funds`                                             |
-| 404    | `not_found`, `session_not_found`, `bet_not_found`                |
-| 409    | `betting_closed`, `round_not_running`, `bet_not_active`          |
-| 502    | `wallet_unavailable`                                             |
-
-### Stream
-
-WebSocket: `ws://localhost:4000/stream`. Send the operator key in the `x-operator-key` header, or as a query parameter: `/stream?key=dev-operator-key`.
-
-Every message is one JSON event:
-
-```json
-{ "type": "tick", "seq": 1042, "data": { "roundId": "…", "multiplier": 1.37, "t": 5200 } }
+```sh
+npm run test:smoke
+node scripts/recovery-smoke.mjs
 ```
 
-`seq` is a global number. It increases by 1 for each event, across all rounds.
+The second command deliberately restarts this project's engine and verifies an interrupted stake is refunded. Use an idle demo; other simultaneous player actions can change its balance assertion. Set `DEMO_URL` if you changed the port.
 
-| `type`           | `data`                                           | When                              |
-| ---------------- | ------------------------------------------------ | --------------------------------- |
-| `round.betting`  | `{ roundId, serverSeedHash, bettingEndsAt }`     | A new round opens for bets.       |
-| `round.started`  | `{ roundId, startedAt }`                         | The multiplier starts.            |
-| `tick`           | `{ roundId, multiplier, t }`                     | Every 100 ms while running. `t` is ms since start. |
-| `bet.cashed_out` | `{ betId, playerId, roundId, multiplier, payout }` | A bet cashed out (manual or auto). |
-| `round.crashed`  | `{ roundId, crashPoint, serverSeed }`            | The round ends.                   |
+For host unit tests: `npm ci && npm test`. Host database tests require a dedicated `TEST_DATABASE_URL` and `npm run test:integration`; never point this at a production database.
 
-Times (`bettingEndsAt`, `startedAt`) are Unix milliseconds.
+## Structure and decisions
 
-### Wallet webhooks (engine → operator)
+| Location | Responsibility |
+| --- | --- |
+| `engine/src` | Existing crash cycle, sessions, bets and events; integrated bonus settlement and payment recovery. |
+| `packages/bonus` | Pure TypeScript mechanic and Valibot config validation. No HTTP, database or browser dependencies. |
+| `packages/storage` | Shared Drizzle schema, SQL migration, round records and transactional wallet operations. |
+| `operator/src` | Fastify wallet callbacks, player API, filtered event stream, replay and static client. |
+| `client/src` | Small React 19 interface. |
+| `configs/bonus.json` | Versioned bonus settings. |
 
-The engine calls your service to move money.
+I retained the working JavaScript engine and wrote the new modules in TypeScript. A small shared storage package avoids defining two competing schemas for the engine and wallet. Plain functions handle the mechanic; the storage class owns its connection pool. One engine owns the round clock, enforced by a database advisory lock.
 
-| Call   | URL                               | When                        |
-| ------ | --------------------------------- | --------------------------- |
-| Debit  | `POST {OPERATOR_URL}/wallet/debit`  | A player places a bet.    |
-| Credit | `POST {OPERATOR_URL}/wallet/credit` | A bet cashes out.         |
+The browser uses only the operator API. It cannot choose a player, submit a payout or obtain the operator key. This is deliberately one seeded demo identity; it is not production authentication.
 
-A lost bet has no call.
+## Rules and deterministic calculation
 
-Body:
+`evaluateBonus(seed, bet, config)` takes:
 
-```json
-{ "txId": "…", "playerId": "…", "amount": 1000, "betId": "…", "roundId": "…" }
+- Seed: `{ serverSeed, nonce }`.
+- Bet: `{ amount, baseWin }`, in integer minor units.
+- Config: `{ version, triggerChance, multipliers, maxWin }`.
+
+It returns `triggered`, `multiplier`, `baseWin`, `finalWin`, `capped` and `configVersion`. The same complete inputs reproduce the same outcome. All bets in one round share the same bonus decision. A losing bet has zero base winnings and stays zero.
+
+The trigger uses millionths of probability. Multipliers support two decimals; weights are non-negative integers with a positive, safe-integer total. Independent HMAC-SHA256 draws use the server seed as a UTF-8 key and JSON text `["bonus-v1", nonce, version, label, counter]` as the message. Labels are `trigger` and `multiplier`. Rejection sampling maps the 256-bit value into each integer range without modulo bias.
+
+Base cash-out winnings are floored first, following the starter. Bonus multiplication uses `BigInt` hundredths, floors once, then caps the **total payout**, including when the bonus does not trigger. The cap includes the stake already present in the base payout; it is not an additional-profit cap. Balances and API money remain safe integers, not floating-point currency.
+
+Every round saves its seed, nonce and immutable config version before betting opens. Settlement saves the bet, base winnings, selected multiplier and final result. Replay loads those inputs and checks the same function against the saved outcome. Seeds stay private until the round ends, preserving the starter's hash commitment. Replay cannot issue payments.
+
+The promised official bonus seed examples were not supplied. The project-owned regression vector uses seed `assessment-example`, nonce `0`, version `test-v1`, chance `1`, weights `60/30/10` for `2x/5x/10x`, stake `100`, base win `200` and cap `100000`: the selected bonus is `5x`, final win `1000`. This is documented implementation behaviour, not a claim to match unavailable official vectors.
+
+## Change config
+
+Edit [configs/bonus.json](configs/bonus.json). For example, change `triggerChance` to `0.1`, alter table weights or set `maxWin` to `50000`. **Give changed content a new version**, such as `bonus-v2`.
+
+The engine validates and freezes the config at each new round. An existing round and its replay retain the original snapshot. Restart only the operator (`docker compose restart operator`) to refresh its cached example cards after an edit; the engine loads the file for its next round automatically.
+
+Values such as chance `1.2`, a negative weight, an empty/all-zero table or fractional `maxWin` are rejected. Reusing a version for different content is rejected. Invalid config stops new play with a visible connection error and server log; it is never silently replaced. Fix the file and restart the affected service.
+
+## Add another mechanic
+
+Another game can import the existing module directly:
+
+```ts
+const outcome = evaluateBonus(
+  { serverSeed, nonce },
+  { amount: stakeInCents, baseWin: baseWinInCents },
+  validatedConfig,
+);
+// Persist outcome; send outcome.finalWin through that game's wallet path.
 ```
 
-Headers:
+For a different rule, add a pure function with the same explicit input/output boundary and its own validated config. Replace the calculation at settlement (`Store.settleWin`), zero-win settlement (`Store.markLost`), round reveal (`game.js`), replay (`Store.replay`) and examples (`makeExamples`). Keep those callers on the same implementation and record the new config/rule version. Tests should prove deterministic vectors and the new rule's edges. Wallet transactions, signatures and the UI's payment confirmation remain separate from game mathematics.
 
-| Header        | Value                                                         |
-| ------------- | ------------------------------------------------------------- |
-| `x-timestamp` | Unix time in seconds.                                         |
-| `x-signature` | `hex(HMAC_SHA256(WEBHOOK_SECRET, "${x-timestamp}.${rawBody}"))` |
+## Money and failure modes
 
-`rawBody` is the exact request body, as bytes.
+Wallet requests authenticate the exact body bytes with HMAC and a timestamp within 60 seconds. Amounts must match a recorded bet and its canonical transaction ID. A database transaction locks the player's wallet, checks the prior receipt, changes the balance and records the result together. A unique bet/operation pair also prevents payment under a second ID.
 
-Expected responses:
+| Situation | Behaviour |
+| --- | --- |
+| Concurrent bets / insufficient balance | Wallet row locks serialize debits. A balance cannot become negative; declined results are recorded for consistent retries. |
+| Duplicate request or lost response | Browser bet IDs and wallet transaction IDs are stable. Matching retries return the saved result; changed details are rejected. |
+| Credit endpoint unavailable | The saved payout remains pending. The engine retries it; the UI shows confirmation is pending. |
+| Engine restarts mid-round | Accepted, unsettled stakes are refunded once. Unresolved debits are reconciled with their original IDs; already-calculated wins are still paid. |
+| Database fails during settlement | The engine stops rather than continuing from uncertain state. Recovery uses the durable records on restart. |
+| Config changes | Each round keeps its original snapshot. Reusing the version with changed content fails. |
+| Stream drops, gaps or reordered events | The server rejects stale sequence numbers and reconnects. The client reloads authoritative state and also polls. |
+| Repeated cash-outs / replay | One settlement wins; repeats cannot pay again. Replay is read-only. |
 
-| Response            | Meaning                                  |
-| ------------------- | ---------------------------------------- |
-| `200 { balance }`   | Done. `balance` is the new balance.      |
-| `402`               | Debit only: not enough funds.            |
+Not handled as production features: real accounts/authentication, multi-currency, deposits/withdrawals, distributed engine failover, automatic database disaster recovery, regulatory certification, or adversarial load protection. Total balances above JavaScript's safe-integer bound are rejected rather than rounded; resolving such an extreme pending credit would require operator intervention. The supported demo assumes the database is durable and services are restarted after a fatal database/config error.
 
-The engine may retry a webhook.
+## AI use
 
-### Provably fair
+Codex assisted with planning, implementation, tests, interface and documentation. Human direction established the assessment scope, required a complete wallet/client rather than an incomplete demo, chose the repository and requested concise learning notes. The mechanics and money behaviour were checked with deterministic unit tests, real Postgres transactions, Docker smoke tests and browser inspection.
 
-Each round has a random `serverSeed` (64 hex characters).
-
-1. At `round.betting`, the engine publishes `serverSeedHash = hex(SHA256(serverSeed))`.
-2. At `round.crashed`, the engine reveals `serverSeed`.
-
-Anyone can then check the crash point:
-
-```
-hash = hex(HMAC_SHA256(key = serverSeed, message = roundId))
-h    = first 13 hex characters of hash, as an integer (52 bits)
-e    = 2^52
-
-if h % 100 == 0:  crashPoint = 1.00
-else:             crashPoint = floor((100 * e - h) / (e - h)) / 100
-```
-
-`serverSeed` and `roundId` are used as UTF-8 text. Use integer math (for example `BigInt`) for the division. Reference: `engine/src/fair.js`.
-
-## Your task
-
-Build an **operator service** and a small **player client**.
-
-Use these where you can: Node, Fastify, Postgres, Drizzle, Valibot, React 19, TypeScript. Redis is optional. You can put your code in `operator/` and `client/`, or use another layout.
-
-Must have:
-
-1. **Proxy.** The browser never talks to the engine. The operator key stays on the server.
-2. **Wallet.** Balances live in Postgres. Implement the debit and credit webhooks. A balance never goes below zero.
-3. **Real-time.** Fan out the engine stream to browsers (WebSocket or SSE). A browser that reconnects returns to the correct state.
-4. **Client.** Show the multiplier and the balance. Have a bet form and a cash-out button.
-5. **Validation.** Validate all input from the engine and from the browser.
-6. **Migrations.** Make schema changes as Drizzle migrations.
-7. **Tests.** At least for the wallet.
-
-Seed a few players with a starting balance. A simple player picker is fine — you do not need real login.
-
-## What to send back
-
-- A repo where `docker compose up` runs everything (engine, Postgres, your operator, your client).
-- Your commit history. Do not squash it.
-- A section in this README (or a new file) with:
-  - The decisions you made, and why.
-  - The failure modes you considered, and the ones you did not handle.
-  - How you used AI: which tools, where they helped, where they were wrong. This does not change your score.
-
-## Time
-
-You have **3 days** from the day you get this brief. Unfinished work is fine. Tell us what you would do next.
-
-## AI tools
-
-AI tools are allowed.
-
-## Submit
-
-Please submit in a private repo and invite the reviewers we give you.
+AI-generated work required correction: the initial client state updates did not satisfy strict null checks; an authentication test omitted JSON content type and reached HTTP 415 before signature verification; and the first dependency choices included versions flagged by `npm audit`. These were corrected through type checking, a properly formed HTTP test and patched dependencies. JSONB object-key ordering and late-debit/crash timing were also addressed during review. Commit history records actual implementation stages and checks.
