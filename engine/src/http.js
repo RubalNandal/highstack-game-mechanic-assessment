@@ -38,14 +38,20 @@ async function readJson(req) {
 function parseBetRequest(body) {
   if (typeof body !== 'object' || body === null) throw invalid('body must be an object');
   const { sessionId, roundId, amount, autoCashout, requestId } = body;
-  if (requestId !== undefined && (typeof requestId !== 'string' || !/^[a-f0-9-]{36}$/i.test(requestId))) throw invalid('requestId must be a UUID');
+  if (
+    requestId !== undefined &&
+    (typeof requestId !== 'string' || !/^[a-f0-9-]{36}$/i.test(requestId))
+  )
+    throw invalid('requestId must be a UUID');
   if (typeof sessionId !== 'string' || !sessionId) throw invalid('sessionId must be a string');
   if (typeof roundId !== 'string' || !roundId) throw invalid('roundId must be a string');
   if (!Number.isSafeInteger(amount) || amount < 1 || amount > MAX_AMOUNT) {
     throw invalid(`amount must be an integer from 1 to ${MAX_AMOUNT}`);
   }
   if (autoCashout !== undefined) {
-    const twoDecimals = Number.isFinite(autoCashout) && Math.abs(autoCashout * 100 - Math.round(autoCashout * 100)) < 1e-9;
+    const twoDecimals =
+      Number.isFinite(autoCashout) &&
+      Math.abs(autoCashout * 100 - Math.round(autoCashout * 100)) < 1e-9;
     if (!twoDecimals || autoCashout < 1.01 || autoCashout > 1_000_000) {
       throw invalid('autoCashout must be a number from 1.01 with at most 2 decimals');
     }
@@ -56,23 +62,35 @@ function parseBetRequest(body) {
 const routes = [
   ['GET', /^\/rounds\/current$/, () => ({ status: 200, body: roundSnapshot() })],
 
-  ['POST', /^\/players\/([^/]+)\/session$/, (req, [playerId]) => {
-    if (!ID_PATTERN.test(playerId)) throw invalid('player id must match [A-Za-z0-9_-]{1,64}');
-    return { status: 200, body: { sessionId: createSession(playerId) } };
-  }],
+  [
+    'POST',
+    /^\/players\/([^/]+)\/session$/,
+    (req, [playerId]) => {
+      if (!ID_PATTERN.test(playerId)) throw invalid('player id must match [A-Za-z0-9_-]{1,64}');
+      return { status: 200, body: { sessionId: createSession(playerId) } };
+    },
+  ],
 
   ['POST', /^\/bets$/, async (req) => placeBet(parseBetRequest(await readJson(req)))],
 
-  ['POST', /^\/bets\/([^/]+)\/cashout$/, async (req, [betId]) => {
-    const result = await cashout(betId);
-    if (faults.cashoutTimeout && result.status === 200) await sleep(10_000);
-    return result;
-  }],
+  [
+    'POST',
+    /^\/bets\/([^/]+)\/cashout$/,
+    async (req, [betId]) => {
+      const result = await cashout(betId);
+      if (faults.cashoutTimeout && result.status === 200) await sleep(10_000);
+      return result;
+    },
+  ],
 
-  ['GET', /^\/bets\/([^/]+)$/, async (req, [betId]) => {
-    const bet = await getBet(betId);
-    return bet ? { status: 200, body: bet } : { status: 404, body: { error: 'bet_not_found' } };
-  }],
+  [
+    'GET',
+    /^\/bets\/([^/]+)$/,
+    async (req, [betId]) => {
+      const bet = await getBet(betId);
+      return bet ? { status: 200, body: bet } : { status: 404, body: { error: 'bet_not_found' } };
+    },
+  ],
 ];
 
 async function handle(req) {
@@ -110,6 +128,11 @@ export function createHttpServer() {
       res.writeHead(status, { 'content-type': 'application/json' });
       res.end(JSON.stringify(body));
     }
-    log.debug('http request', { method: req.method, url: req.url, status, ms: Date.now() - started });
+    log.debug('http request', {
+      method: req.method,
+      url: req.url,
+      status,
+      ms: Date.now() - started,
+    });
   });
 }

@@ -17,11 +17,14 @@ await store.recoverInterrupted();
 const server = createHttpServer();
 attachStream(server);
 await startGame({ onMultiplier: runAutoCashouts, onCrash: settleLostBets });
-server.listen(config.port, () => log.info('crashsim listening', { port: config.port, ...activeFaults() }));
+server.listen(config.port, () =>
+  log.info('crashsim listening', { port: config.port, ...activeFaults() }),
+);
 const worker = setInterval(() => recoverPayments().catch(fatal), 1000);
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.on(signal, async () => {
-    stopGame(); clearInterval(worker);
+    stopGame();
+    clearInterval(worker);
     server.close();
     lease.release();
     await store.close();
