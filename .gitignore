@@ -1,3 +1,9 @@
 node_modules/
 .env
 .DS_Store
+dist/
+*.tsbuildinfo
+coverage/
+test-results/
+playwright-report/
+LocalFile/

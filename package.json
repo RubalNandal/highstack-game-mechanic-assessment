@@ -1,0 +1,26 @@
+{
+  "name": "highstack-game-mechanic-assessment",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "engine",
+    "packages/*",
+    "operator",
+    "client"
+  ],
+  "scripts": {
+    "build": "npm run build:server && npm run build -w client",
+    "build:server": "tsc -b packages/bonus packages/storage operator",
+    "test": "npm run build:server && node --import tsx --test engine/test/*.test.js packages/bonus/test/*.test.ts operator/test/*.test.ts",
+    "test:integration": "npm run build:server && node --import tsx --test packages/storage/test/*.test.ts",
+    "start": "node operator/dist/index.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "~5.9.0",
+    "tsx": "^4.20.0"
+  }
+}
