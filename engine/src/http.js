@@ -37,7 +37,8 @@ async function readJson(req) {
 
 function parseBetRequest(body) {
   if (typeof body !== 'object' || body === null) throw invalid('body must be an object');
-  const { sessionId, roundId, amount, autoCashout } = body;
+  const { sessionId, roundId, amount, autoCashout, requestId } = body;
+  if (requestId !== undefined && (typeof requestId !== 'string' || !/^[a-f0-9-]{36}$/i.test(requestId))) throw invalid('requestId must be a UUID');
   if (typeof sessionId !== 'string' || !sessionId) throw invalid('sessionId must be a string');
   if (typeof roundId !== 'string' || !roundId) throw invalid('roundId must be a string');
   if (!Number.isSafeInteger(amount) || amount < 1 || amount > MAX_AMOUNT) {
@@ -49,7 +50,7 @@ function parseBetRequest(body) {
       throw invalid('autoCashout must be a number from 1.01 with at most 2 decimals');
     }
   }
-  return { sessionId, roundId, amount, autoCashout };
+  return { sessionId, roundId, amount, autoCashout, requestId };
 }
 
 const routes = [
@@ -63,13 +64,13 @@ const routes = [
   ['POST', /^\/bets$/, async (req) => placeBet(parseBetRequest(await readJson(req)))],
 
   ['POST', /^\/bets\/([^/]+)\/cashout$/, async (req, [betId]) => {
-    const result = cashout(betId);
+    const result = await cashout(betId);
     if (faults.cashoutTimeout && result.status === 200) await sleep(10_000);
     return result;
   }],
 
-  ['GET', /^\/bets\/([^/]+)$/, (req, [betId]) => {
-    const bet = getBet(betId);
+  ['GET', /^\/bets\/([^/]+)$/, async (req, [betId]) => {
+    const bet = await getBet(betId);
     return bet ? { status: 200, body: bet } : { status: 404, body: { error: 'bet_not_found' } };
   }],
 ];
@@ -97,6 +98,9 @@ export function createHttpServer() {
       if (err instanceof HttpError) {
         status = err.status;
         body = { error: err.error, message: err.message };
+      } else if (err.name === 'ConflictError') {
+        status = 409;
+        body = { error: 'conflict', message: err.message };
       } else {
         log.error('request failed', { error: err.stack });
         body = { error: 'internal_error' };
