@@ -101,7 +101,7 @@ export class Store {
       bet.amount !== amount ||
       bet.autoCashout !== (autoCashout === undefined ? null : Math.round(autoCashout * 100))
     )
-      throw new ConflictError('Request ID reused with different bet details');
+      throw new ConflictError('Bet ID reused with different bet details');
     return bet;
   }
 

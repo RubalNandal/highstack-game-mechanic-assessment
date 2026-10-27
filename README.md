@@ -33,20 +33,31 @@ The second command deliberately restarts this project's engine and verifies an i
 
 For host unit tests: `npm ci && npm test`. Host database tests require a dedicated `TEST_DATABASE_URL` and `npm run test:integration`; never point this at a production database.
 
-## Structure and decisions
+## What was there and what we added
 
-| Location | Responsibility |
+### Already in the starter
+
+The `engine` ran the crash game: betting, multiplier growth, cash-outs, seed verification and live events. It could send signed debit/credit requests to a wallet service. Docker also started Postgres, but the starter had no receiving wallet service, player website or saved round history.
+
+### Added for this assessment
+
+| Location | What it does |
 | --- | --- |
-| `engine/src` | Existing crash cycle, sessions, bets and events; integrated bonus settlement and payment recovery. |
-| `packages/bonus` | Pure TypeScript mechanic and Valibot config validation. No HTTP, database or browser dependencies. |
-| `packages/storage` | Shared Drizzle schema, SQL migration, round records and transactional wallet operations. |
-| `operator/src` | Fastify wallet callbacks, player API, filtered event stream, replay and static client. |
-| `client/src` | Small React 19 interface. |
-| `configs/bonus.json` | Versioned bonus settings. |
+| `packages/bonus` | Calculates the bonus trigger, weighted multiplier and capped winnings. Validates its config. Another game can reuse it. |
+| `configs/bonus.json` | Holds the editable bonus chance, multiplier table, win cap and version. |
+| `packages/storage` | Shared code that reads and writes Postgres: configs, rounds, bets, balances and payment receipts. Includes the database tables and migrations. |
+| `engine/src` changes | Connect the bonus to cash-outs, save replay inputs and recover pending payments after a restart. |
+| `operator/src` | The server between the website and engine. Receives signed wallet requests, provides balances/replay and forwards live updates. |
+| `client/src` | Small React website for betting, cash-out, bonus results, examples and replay. |
+| Tests and Docker setup | Check the mechanic and money handling, and start the complete demo together. |
 
-I retained the working JavaScript engine and wrote the new modules in TypeScript. A small shared storage package avoids defining two competing schemas for the engine and wallet. Plain functions handle the mechanic; the storage class owns its connection pool. One engine owns the round clock, enforced by a database advisory lock.
+A **package** is a named group of reusable code. The engine and operator import the bonus and storage packages; those packages run inside the servers that use them.
+
+The original engine stays in JavaScript; new code uses TypeScript. The bonus calculation is separate from database and HTTP code. Both servers share the storage code and database. One engine owns the round clock, enforced by a database lock.
 
 The browser uses only the operator API. It cannot choose a player, submit a payout or obtain the operator key. This is deliberately one seeded demo identity; it is not production authentication.
+
+The browser creates a `betId` before submitting a bet and keeps that same ID for retries. The operator forwards it and the engine saves it as `bets.id`; responses call it `betId`. Wallet operations use `debit:<betId>` and `credit:<betId>` so a repeated payment can be recognised. The starter's separate `sessionId` still identifies the player to the engine when creating the bet.
 
 ## Rules and deterministic calculation
 

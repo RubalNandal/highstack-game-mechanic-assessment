@@ -37,12 +37,12 @@ async function readJson(req) {
 
 function parseBetRequest(body) {
   if (typeof body !== 'object' || body === null) throw invalid('body must be an object');
-  const { sessionId, roundId, amount, autoCashout, requestId } = body;
+  const { sessionId, roundId, amount, autoCashout, betId } = body;
   if (
-    requestId !== undefined &&
-    (typeof requestId !== 'string' || !/^[a-f0-9-]{36}$/i.test(requestId))
+    betId !== undefined &&
+    (typeof betId !== 'string' || !/^[a-f0-9-]{36}$/i.test(betId))
   )
-    throw invalid('requestId must be a UUID');
+    throw invalid('betId must be a UUID');
   if (typeof sessionId !== 'string' || !sessionId) throw invalid('sessionId must be a string');
   if (typeof roundId !== 'string' || !roundId) throw invalid('roundId must be a string');
   if (!Number.isSafeInteger(amount) || amount < 1 || amount > MAX_AMOUNT) {
@@ -56,7 +56,7 @@ function parseBetRequest(body) {
       throw invalid('autoCashout must be a number from 1.01 with at most 2 decimals');
     }
   }
-  return { sessionId, roundId, amount, autoCashout, requestId };
+  return { sessionId, roundId, amount, autoCashout, betId };
 }
 
 const routes = [

@@ -31,7 +31,7 @@ export const RoundSnapshotSchema = v.object({
   bettingEndsAt: v.optional(amount),
 });
 export const BetSchema = v.strictObject({
-  requestId: v.pipe(v.string(), v.uuid()),
+  betId: v.pipe(v.string(), v.uuid()),
   roundId: v.pipe(v.string(), v.uuid()),
   amount: v.pipe(amount, v.minValue(1), v.maxValue(1_000_000_000)),
   autoCashout: v.optional(

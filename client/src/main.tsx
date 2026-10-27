@@ -1,6 +1,7 @@
 import { StrictMode, useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { money, parseStake } from './money';
+import { readPending, type Pending } from './pending';
 import './style.css';
 
 type Outcome = {
@@ -49,8 +50,6 @@ type Replay = {
   config: object;
   configHash: string;
 };
-type Pending = { requestId: string; roundId: string; amount: number; autoCashout?: number };
-
 async function api<T>(path: string, body?: object): Promise<T> {
   const response = await fetch(path, {
     method: body ? 'POST' : 'GET',
@@ -62,13 +61,6 @@ async function api<T>(path: string, body?: object): Promise<T> {
   if (!response.ok)
     throw Object.assign(new Error(result.error ?? 'Request failed'), { status: response.status });
   return result;
-}
-function readPending(): Pending | null {
-  try {
-    return JSON.parse(sessionStorage.getItem('pending-bet') ?? 'null');
-  } catch {
-    return null;
-  }
 }
 function App() {
   const [state, setState] = useState<State | null>(null);
@@ -109,7 +101,7 @@ function App() {
             ? current.round
             : data.round,
       }));
-      const saved = data.bets.find((bet) => bet.id === pendingRef.current?.requestId);
+      const saved = data.bets.find((bet) => bet.id === pendingRef.current?.betId);
       if (saved && saved.status !== 'pending') persistPending(null);
     } catch (error) {
       setMessage((error as Error).message);
@@ -192,7 +184,7 @@ function App() {
       )
         throw new Error('Auto cash-out must be at least 1.01, with at most two decimals.');
       const request = pendingRef.current ?? {
-        requestId: crypto.randomUUID(),
+        betId: crypto.randomUUID(),
         roundId: round.roundId,
         amount: parseStake(stake),
         autoCashout,

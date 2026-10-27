@@ -22,7 +22,7 @@ const before = await until(
 const response = await fetch(`${base}/api/bets`, {
   method: 'POST',
   headers: { 'content-type': 'application/json' },
-  body: JSON.stringify({ requestId: randomUUID(), roundId: before.round.roundId, amount: 100 }),
+  body: JSON.stringify({ betId: randomUUID(), roundId: before.round.roundId, amount: 100 }),
 });
 assert.ok(response.ok);
 const bet = await response.json();

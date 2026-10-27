@@ -30,6 +30,14 @@ test('untrusted bet and wallet input reject unsafe/fractional money and extra pr
   for (const amount of [-1, 1.5, Infinity, Number.MAX_SAFE_INTEGER + 1])
     assert.throws(() => parseInput(WalletSchema, { ...payload, amount }));
   assert.throws(() => parseInput(WalletSchema, { ...payload, admin: true }));
+  const bet = {
+    betId: '00000000-0000-4000-8000-000000000001',
+    roundId: '00000000-0000-4000-8000-000000000000',
+    amount: 100,
+  };
+  assert.deepEqual(parseInput(BetSchema, bet), bet);
+  assert.throws(() => parseInput(BetSchema, { ...bet, betId: 'invalid' }));
+  assert.throws(() => parseInput(BetSchema, { roundId: bet.roundId, amount: 100 }));
   assert.throws(() => parseInput(BetSchema, { roundId: 'invalid', amount: 100 }));
 });
 

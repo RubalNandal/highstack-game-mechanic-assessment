@@ -28,13 +28,13 @@ const before = await until(
 );
 const manual = process.env.MANUAL_CASHOUT === '1';
 const input = {
-  requestId: randomUUID(),
+  betId: randomUUID(),
   roundId: before.round.roundId,
   amount: 100,
   ...(manual ? {} : { autoCashout: 1.01 }),
 };
 const placed = await request('/api/bets', input);
-assert.equal(placed.betId, input.requestId);
+assert.equal(placed.betId, input.betId);
 const duplicate = await request('/api/bets', input);
 assert.equal(duplicate.betId, placed.betId);
 if (manual) {

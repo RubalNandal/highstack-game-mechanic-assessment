@@ -125,9 +125,9 @@ export async function createApp(store: Store, options: Options) {
     return { playerId: PLAYER, balance, bets, round, engineOnline: round !== null };
   });
   app.post('/api/bets', async (request) => {
-    const { requestId, ...bet } = parseInput(BetSchema, request.body);
+    const bet = parseInput(BetSchema, request.body);
     const { sessionId } = await engine(`/players/${PLAYER}/session`, {});
-    return engine('/bets', { ...bet, sessionId, requestId });
+    return engine('/bets', { ...bet, sessionId });
   });
   app.post<{ Params: { id: string } }>('/api/bets/:id/cashout', async (request) => {
     const bet = await store.getBet(request.params.id);

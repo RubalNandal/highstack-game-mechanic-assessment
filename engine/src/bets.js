@@ -36,10 +36,10 @@ export async function getBet(betId) {
   const bet = await store.getBet(betId);
   return bet ? view(bet) : null;
 }
-export async function placeBet({ sessionId, roundId, amount, autoCashout, requestId }) {
+export async function placeBet({ sessionId, roundId, amount, autoCashout, betId }) {
   const playerId = sessions.get(sessionId);
   if (!playerId) return reply(404, { error: 'session_not_found' });
-  const existing = requestId && (await store.getBet(requestId));
+  const existing = betId && (await store.getBet(betId));
   if (!existing) {
     const round = getRound();
     if (round.id !== roundId || round.state !== 'betting' || Date.now() >= round.bettingEndsAt)
@@ -50,7 +50,7 @@ export async function placeBet({ sessionId, roundId, amount, autoCashout, reques
     roundId,
     amount,
     autoCashout,
-    requestId ?? randomUUID(),
+    betId ?? randomUUID(),
   );
   if (bet.status === 'pending') await processDebit(bet);
   const saved = await store.getBet(bet.id);
