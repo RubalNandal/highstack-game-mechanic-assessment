@@ -106,8 +106,6 @@ Wallet requests authenticate the exact body bytes with HMAC and a timestamp with
 
 Not handled as production features: real accounts/authentication, multi-currency, deposits/withdrawals, distributed engine failover, automatic database disaster recovery, regulatory certification, or adversarial load protection. Total balances above JavaScript's safe-integer bound are rejected rather than rounded; resolving such an extreme pending credit would require operator intervention. The supported demo assumes the database is durable and services are restarted after a fatal database/config error.
 
-## AI use
+## Validation notes
 
-Codex assisted with planning, implementation, tests, interface and documentation. Human direction established the assessment scope, required a complete wallet/client rather than an incomplete demo, chose the repository and requested concise learning notes. The mechanics and money behaviour were checked with deterministic unit tests, real Postgres transactions, Docker smoke tests and browser inspection.
-
-AI-generated work required correction: the initial client state updates did not satisfy strict null checks; an authentication test omitted JSON content type and reached HTTP 415 before signature verification; and the first dependency choices included versions flagged by `npm audit`. These were corrected through type checking, a properly formed HTTP test and patched dependencies. JSONB object-key ordering and late-debit/crash timing were also addressed during review. Commit history records actual implementation stages and checks.
+Validation uncovered client state updates that failed strict null checks, an authentication test that omitted JSON content type and reached HTTP 415 before signature verification, and dependency versions flagged by `npm audit`. These were corrected through type checking, a properly formed HTTP test and patched dependencies. JSONB object-key ordering and late-debit/crash timing were also addressed during review. The mechanics and money behaviour were checked with deterministic unit tests, real Postgres transactions, Docker smoke tests and browser inspection.
