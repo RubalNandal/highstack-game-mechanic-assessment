@@ -8,15 +8,19 @@ const store = new Store(
 );
 await store.migrate();
 await store.seedPlayer();
-const config = parseConfig(
-  JSON.parse(await readFile(process.env.BONUS_CONFIG_PATH ?? 'configs/bonus.json', 'utf8')),
-);
+async function loadConfig() {
+  return parseConfig(
+    JSON.parse(await readFile(process.env.BONUS_CONFIG_PATH ?? 'configs/bonus.json', 'utf8')),
+  );
+}
+const config = await loadConfig();
 await store.saveConfig(config);
 const app = await createApp(store, {
   engineUrl: process.env.ENGINE_URL ?? 'http://localhost:4000',
   operatorKey: process.env.OPERATOR_KEY ?? 'dev-operator-key',
   webhookSecret: process.env.WEBHOOK_SECRET ?? 'dev-webhook-secret',
   config,
+  loadConfig,
   staticRoot: 'client/dist',
 });
 await app.listen({ host: '0.0.0.0', port: Number(process.env.PORT ?? 3000) });

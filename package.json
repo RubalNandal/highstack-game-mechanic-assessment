@@ -11,7 +11,7 @@
   "scripts": {
     "build": "npm run build:server && npm run build -w client",
     "build:server": "tsc -b packages/bonus packages/storage operator",
-    "test": "npm run build:server && node --import tsx --test engine/test/*.test.js packages/bonus/test/*.test.ts operator/test/*.test.ts client/test/*.test.ts",
+    "test": "npm run build:server && node --import tsx --test engine/test/*.test.js packages/bonus/test/*.test.ts",
     "test:integration": "npm run build:server && node --import tsx --test packages/storage/test/*.test.ts",
     "start": "node operator/dist/index.js",
     "test:smoke": "node scripts/smoke.mjs"

@@ -7,6 +7,7 @@ import { ConflictError, type Store } from '@highstack/storage';
 import type { BonusConfig } from '@highstack/bonus';
 import { makeExamples } from './examples.js';
 import { verifySignature } from './security.js';
+import { registerEngineRoutes } from './engine.js';
 import {
   BetSchema,
   BetResponseSchema,
@@ -27,6 +28,7 @@ type Options = {
   operatorKey: string;
   webhookSecret: string;
   config: BonusConfig;
+  loadConfig?: () => Promise<BonusConfig>;
   staticRoot?: string;
   stream?: boolean;
   logger?: boolean;
@@ -66,6 +68,9 @@ export async function createApp(store: Store, options: Options) {
       error: code >= 500 ? 'Service unavailable; retry shortly' : (error as Error).message,
     });
   });
+
+  registerEngineRoutes(app, store, options.webhookSecret,
+    options.loadConfig ?? (async () => options.config));
 
   async function engine(path: string, body?: object) {
     const response = await fetch(`${options.engineUrl}${path}`, {

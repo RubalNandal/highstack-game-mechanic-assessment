@@ -51,6 +51,8 @@ if (manual) {
       results.some((result) => result.status === 'fulfilled'),
       'At least one cash-out must be recorded',
     );
+    for (const result of results)
+      if (result.status === 'fulfilled') assert.equal(result.value.payoutStatus, 'paid');
   }
 }
 const after = await until(

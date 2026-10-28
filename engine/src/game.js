@@ -4,7 +4,7 @@ import { crashPoint, msToReach, multiplierAt, newServerSeed, sha256Hex, toCents 
 import { faults } from './faults.js';
 import { log } from './log.js';
 import { createEvent, currentSeq, emit, send } from './stream.js';
-import { loadBonusConfig, store } from './runtime.js';
+import { operator } from './operator.js';
 import { evaluateBonus } from '@highstack/bonus';
 
 let round = null;
@@ -58,10 +58,9 @@ function schedule(fn, delay) {
   if (!stopped) timer = setTimeout(() => fn().catch(fatal), delay);
 }
 async function startBetting() {
-  const bonus = await loadBonusConfig();
   const id = randomUUID(),
     serverSeed = newServerSeed();
-  const saved = await store.createRound(id, serverSeed, bonus.version);
+  const { round: saved, config: bonus } = await operator.createRound(id, serverSeed);
   round = {
     id,
     state: 'betting',
@@ -69,6 +68,7 @@ async function startBetting() {
     serverSeedHash: sha256Hex(serverSeed),
     nonce: saved.nonce,
     configVersion: bonus.version,
+    bonusConfig: bonus,
     crashPoint: crashPoint(serverSeed, id),
     bettingEndsAt: Date.now() + config.bettingMs,
     startedAt: null,
@@ -95,7 +95,7 @@ async function startBetting() {
   schedule(startRunning, config.bettingMs);
 }
 async function startRunning() {
-  await store.setRoundState(round.id, 'running');
+  await operator.setRoundState(round.id, 'running');
   round.state = 'running';
   round.startedAt = Date.now();
   if (faults.reorder && Math.random() < 0.5)
@@ -121,7 +121,7 @@ async function crash() {
   round.state = 'crashed';
   await hooks.onMultiplier(round.id, toCents(round.crashPoint) - 1);
   await hooks.onCrash(round.id);
-  await store.setRoundState(round.id, 'crashed');
+  await operator.setRoundState(round.id, 'crashed');
   round.multiplier = round.crashPoint;
   log.info('round crashed', { roundId: round.id, crashPoint: round.crashPoint });
   emit('round.crashed', {

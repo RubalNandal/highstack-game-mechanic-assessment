@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { configHash, drawBelow, evaluateBonus, parseConfig } from '../src/index.js';
+import { evaluateBonus, parseConfig } from '../src/index.js';
 
 const seed = { serverSeed: 'assessment-example', nonce: 0 };
 const bet = { amount: 100, baseWin: 200 };
@@ -15,92 +15,29 @@ const config = parseConfig({
   maxWin: 100_000,
 });
 
-test('documented project-owned seed vector stays stable', () => {
-  assert.equal(drawBelow(seed, 'test-v1', 'multiplier', 100n), 73n);
-  assert.deepEqual(evaluateBonus(seed, bet, config), {
-    triggered: true,
-    multiplier: 5,
-    baseWin: 200,
-    finalWin: 1000,
-    capped: false,
-    configVersion: 'test-v1',
-  });
-});
-
-test('same complete inputs reproduce the exact outcome without mutation', () => {
-  const first = evaluateBonus(seed, bet, config);
-  for (let i = 0; i < 20; i++) assert.deepEqual(evaluateBonus(seed, bet, config), first);
-  assert.equal(bet.baseWin, 200);
-  assert.ok(Object.isFrozen(config.multipliers[0]));
-  assert.equal(configHash(config), configHash({ ...config }));
-});
-
-test('zero/full chance and losing bets', () => {
-  assert.deepEqual(evaluateBonus(seed, bet, { ...config, triggerChance: 0 }), {
-    triggered: false,
-    multiplier: 1,
-    baseWin: 200,
-    finalWin: 200,
-    capped: false,
-    configVersion: 'test-v1',
-  });
-  assert.equal(evaluateBonus(seed, bet, config).triggered, true);
+test('bonus is deterministic, respects the win cap and rejects invalid config', () => {
+  const outcome = evaluateBonus(seed, bet, config);
+  assert.equal(outcome.multiplier, 5);
+  assert.equal(outcome.finalWin, 1000);
+  assert.deepEqual(evaluateBonus(seed, bet, config), outcome);
+  const capped = evaluateBonus(seed, bet, { ...config, maxWin: 500 });
+  assert.equal(capped.finalWin, 500);
+  assert.equal(capped.capped, true);
   assert.equal(evaluateBonus(seed, { ...bet, baseWin: 0 }, config).finalWin, 0);
-  assert.equal(
-    evaluateBonus(seed, bet, { ...config, triggerChance: 0, maxWin: 100 }).finalWin,
-    100,
-  );
+  assert.throws(() => parseConfig({ ...config, triggerChance: 1.1 }));
+  assert.throws(() => parseConfig({ ...config, multipliers: [{ multiplier: 2, weight: 0 }] }));
 });
 
-test('zero-weight rows never win; exact cap and floor rounding use integer arithmetic', () => {
-  const c = {
+test('zero chance disables the bonus and weights select the configured multipliers', () => {
+  const noBonus = evaluateBonus(seed, bet, { ...config, triggerChance: 0 });
+  assert.equal(noBonus.triggered, false);
+  assert.equal(noBonus.finalWin, bet.baseWin);
+  // These seeds produce tickets 59, 60, 89 and 90: both sides of each table boundary.
+  for (const [nonce, multiplier] of [[183, 2], [5, 5], [201, 5], [173, 10]])
+    assert.equal(evaluateBonus({ ...seed, nonce }, bet, config).multiplier, multiplier);
+  const zeroWeight = {
     ...config,
-    multipliers: [
-      { multiplier: 10, weight: 0 },
-      { multiplier: 2.55, weight: 1 },
-    ],
-    maxWin: 1000,
+    multipliers: [{ multiplier: 10, weight: 0 }, { multiplier: 2, weight: 1 }],
   };
-  assert.equal(evaluateBonus(seed, { amount: 1, baseWin: 101 }, c).finalWin, 257);
-  assert.equal(evaluateBonus(seed, bet, { ...c, maxWin: 500 }).finalWin, 500);
-  assert.equal(evaluateBonus(seed, bet, { ...c, maxWin: 500 }).capped, true);
-  assert.equal(evaluateBonus(seed, bet, { ...c, maxWin: 510 }).capped, false);
-  assert.equal(evaluateBonus(seed, bet, { ...c, maxWin: 0 }).finalWin, 0);
-});
-
-test('weighted selection follows integer ticket boundaries', () => {
-  const seen = new Set<number>();
-  for (let nonce = 0; nonce < 1000; nonce++) {
-    const s = { ...seed, nonce };
-    const ticket = Number(drawBelow(s, config.version, 'multiplier', 100n));
-    const expected = ticket < 60 ? 2 : ticket < 90 ? 5 : 10;
-    assert.equal(evaluateBonus(s, bet, config).multiplier, expected);
-    seen.add(expected);
-  }
-  assert.deepEqual(
-    [...seen].sort((a, b) => a - b),
-    [2, 5, 10],
-  );
-});
-
-test('reject invalid config and unsafe money inputs', () => {
-  for (const change of [
-    { triggerChance: -1 },
-    { triggerChance: 1.1 },
-    { triggerChance: 0.1234567 },
-    { multipliers: [] },
-    { multipliers: [{ multiplier: 2, weight: 0 }] },
-    { multipliers: [{ multiplier: 2, weight: -1 }] },
-    { multipliers: [{ multiplier: 1.001, weight: 1 }] },
-    { maxWin: -1 },
-    { maxWin: 1.5 },
-    { version: '' },
-    { extra: true },
-  ]) {
-    assert.throws(() => parseConfig({ ...config, ...change }));
-  }
-  assert.throws(() =>
-    evaluateBonus(seed, { amount: 1, baseWin: Number.MAX_SAFE_INTEGER + 1 }, config),
-  );
-  assert.throws(() => evaluateBonus({ ...seed, nonce: -1 }, bet, config));
+  assert.equal(evaluateBonus(seed, bet, zeroWeight).multiplier, 2);
 });

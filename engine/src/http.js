@@ -3,7 +3,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { cashout, createSession, getBet, placeBet } from './bets.js';
 import { config } from './config.js';
 import { faults } from './faults.js';
-import { roundSnapshot } from './game.js';
+import { fatal, roundSnapshot } from './game.js';
 import { log } from './log.js';
 
 const MAX_BODY_BYTES = 16 * 1024;
@@ -116,9 +116,10 @@ export function createHttpServer() {
       if (err instanceof HttpError) {
         status = err.status;
         body = { error: err.error, message: err.message };
-      } else if (err.name === 'ConflictError') {
-        status = 409;
-        body = { error: 'conflict', message: err.message };
+      } else if (err.statusCode) {
+        status = err.statusCode;
+        body = { error: status >= 500 ? 'operator_unavailable' : 'conflict', message: err.message };
+        if (err.fatal) fatal(err);
       } else {
         log.error('request failed', { error: err.stack });
         body = { error: 'internal_error' };

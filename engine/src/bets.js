@@ -3,8 +3,9 @@ import { toCents, msToReach } from './fair.js';
 import { fatal, getRound } from './game.js';
 import { emit } from './stream.js';
 import { wallet } from './wallet.js';
-import { store } from './runtime.js';
+import { operator } from './operator.js';
 import { canActivateBet } from './eligibility.js';
+import { calculateOutcome } from './settlement.js';
 
 const sessions = new Map();
 const activeBets = new Map();
@@ -33,19 +34,19 @@ export function createSession(playerId) {
   return sessionId;
 }
 export async function getBet(betId) {
-  const bet = await store.getBet(betId);
+  const bet = await operator.getBet(betId);
   return bet ? view(bet) : null;
 }
 export async function placeBet({ sessionId, roundId, amount, autoCashout, betId }) {
   const playerId = sessions.get(sessionId);
   if (!playerId) return reply(404, { error: 'session_not_found' });
-  const existing = betId && (await store.getBet(betId));
+  const existing = betId && (await operator.getBet(betId));
   if (!existing) {
     const round = getRound();
     if (round.id !== roundId || round.state !== 'betting' || Date.now() >= round.bettingEndsAt)
       return reply(409, { error: 'betting_closed' });
   }
-  const bet = await store.createBet(
+  const bet = await operator.createBet(
     playerId,
     roundId,
     amount,
@@ -53,7 +54,7 @@ export async function placeBet({ sessionId, roundId, amount, autoCashout, betId 
     betId ?? randomUUID(),
   );
   if (bet.status === 'pending') await processDebit(bet);
-  const saved = await store.getBet(bet.id);
+  const saved = await operator.getBet(bet.id);
   if (saved.status === 'rejected')
     return reply(402, { error: 'insufficient_funds', ...view(saved) });
   return reply(saved.status === 'pending' ? 202 : 200, view(saved));
@@ -69,16 +70,20 @@ async function processDebit(bet) {
       betId: bet.id,
       roundId: bet.roundId,
     });
-    if (result.kind === 'declined') return store.rejectDebit(bet.id);
+    if (result.kind === 'declined') return operator.rejectDebit(bet.id);
     if (result.kind !== 'ok') return; // Unknown outcome stays durable and is retried with the same ID.
     const current = getRound();
     const accepted = canActivateBet(current, bet.roundId);
-    const saved = await store.confirmDebit(bet.id, Boolean(accepted));
+    let saved = await operator.confirmDebit(bet.id, Boolean(accepted));
     if (saved?.status === 'active') {
       const latest = getRound();
       if (canActivateBet(latest, bet.roundId)) activeBets.set(saved.id, saved);
-      else await store.refundActive(saved.id);
+      else {
+        await operator.refundActive(saved.id);
+        saved = await operator.getBet(saved.id);
+      }
     }
+    if (saved?.status === 'refunded') await payCredit(saved);
   } finally {
     inFlight.delete(bet.id);
   }
@@ -86,8 +91,8 @@ async function processDebit(bet) {
 export async function cashout(betId) {
   const bet = activeBets.get(betId);
   if (!bet) {
-    const saved = await store.getBet(betId);
-    if (saved?.status === 'cashed_out') return reply(200, view(saved));
+    const saved = await operator.getBet(betId);
+    if (saved?.status === 'cashed_out') return reply(200, view(await payCredit(saved)));
     return reply(saved ? 409 : 404, { error: saved ? 'bet_not_active' : 'bet_not_found' });
   }
   const round = getRound();
@@ -103,7 +108,9 @@ async function settleCashout(bet, multiplier) {
   activeBets.delete(bet.id);
   let saved;
   try {
-    saved = await store.settleWin(bet.id, multiplier);
+    const outcome = calculateOutcome(getRound(), bet, multiplier);
+    saved = await operator.settleWin(bet.id, multiplier, outcome);
+    saved = await payCredit(saved);
   } catch (error) {
     fatal(error);
     throw error;
@@ -124,31 +131,30 @@ export async function runAutoCashouts(roundId, cents) {
   }
 }
 export async function settleLostBets(roundId) {
-  const ids = [];
+  const losses = [];
   for (const bet of activeBets.values()) {
     if (bet.roundId === roundId) {
       activeBets.delete(bet.id);
-      ids.push(bet.id);
+      losses.push(bet);
     }
   }
-  await store.markLost(ids);
+  for (const bet of losses)
+    await operator.markLost(bet.id, calculateOutcome(getRound(), bet, 0));
 }
-let recovering = false;
+async function payCredit(bet) {
+  if (bet.payoutStatus !== 'pending') return bet;
+  const result = await wallet.credit({
+    txId: bet.creditTxId,
+    playerId: bet.playerId,
+    amount: bet.payout,
+    betId: bet.id,
+    roundId: bet.roundId,
+  });
+  return result.kind === 'ok' ? { ...bet, payoutStatus: 'paid' } : bet;
+}
+
 export async function recoverPayments() {
-  if (recovering) return;
-  recovering = true;
-  try {
-    for (const bet of await store.pendingDebits()) await processDebit(bet);
-    for (const bet of await store.pendingCredits()) {
-      await wallet.credit({
-        txId: bet.creditTxId,
-        playerId: bet.playerId,
-        amount: bet.payout,
-        betId: bet.id,
-        roundId: bet.roundId,
-      });
-    }
-  } finally {
-    recovering = false;
-  }
+  const { debits, credits } = await operator.pendingPayments();
+  for (const bet of debits) await processDebit(bet);
+  for (const bet of credits) await payCredit(bet);
 }

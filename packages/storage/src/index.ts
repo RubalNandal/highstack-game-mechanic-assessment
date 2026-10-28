@@ -5,7 +5,7 @@ import pg from 'pg';
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
-import { configHash, evaluateBonus, parseConfig, type BonusConfig } from '@highstack/bonus';
+import { configHash, evaluateBonus, parseConfig, type BonusConfig, type Outcome } from '@highstack/bonus';
 import * as schema from './schema.js';
 
 export type StoredBet = typeof schema.bets.$inferSelect;
@@ -16,7 +16,9 @@ export type WalletPayload = {
   betId: string;
   roundId: string;
 };
-export class ConflictError extends Error {}
+export class ConflictError extends Error {
+  readonly statusCode = 409;
+}
 
 export class Store {
   readonly pool: pg.Pool;
@@ -62,15 +64,31 @@ export class Store {
   }
 
   async createRound(id: string, serverSeed: string, configVersion: string) {
-    const [round] = await this.db
+    await this.db
       .insert(schema.rounds)
       .values({ id, serverSeed, configVersion, state: 'betting' })
-      .returning();
+      .onConflictDoNothing();
+    const round = await this.getRound(id);
+    if (!round || round.serverSeed !== serverSeed)
+      throw new ConflictError('Round ID reused with a different seed');
     return round;
   }
 
+  async getRound(id: string) {
+    return (await this.db.select().from(schema.rounds).where(eq(schema.rounds.id, id)))[0];
+  }
+
+  async getConfig(version: string) {
+    const [saved] = await this.db
+      .select().from(schema.configurations).where(eq(schema.configurations.version, version));
+    if (!saved) throw new ConflictError('Config not found');
+    return parseConfig(saved.snapshot);
+  }
+
   async setRoundState(id: string, state: 'running' | 'crashed') {
-    await this.db.update(schema.rounds).set({ state }).where(eq(schema.rounds.id, id));
+    await this.db.update(schema.rounds).set({ state }).where(and(
+      eq(schema.rounds.id, id), inArray(schema.rounds.state, ['betting', 'running', state]),
+    ));
   }
 
   async createBet(
@@ -78,7 +96,7 @@ export class Store {
     roundId: string,
     amount: number,
     autoCashout?: number,
-    id = randomUUID(),
+    id: string = randomUUID(),
   ) {
     await this.db
       .insert(schema.bets)
@@ -140,24 +158,15 @@ export class Store {
       .where(and(eq(schema.bets.id, id), eq(schema.bets.status, 'active')));
   }
 
-  async settleWin(id: string, multiplier: number) {
+  async settleWin(id: string, multiplier: number, outcome: Outcome) {
     return this.db.transaction(async (tx) => {
       const [bet] = await tx.select().from(schema.bets).where(eq(schema.bets.id, id)).for('update');
+      if (
+        bet?.status === 'cashed_out' &&
+        bet.multiplier === Math.round(multiplier * 100) &&
+        isDeepStrictEqual(bet.outcome, outcome)
+      ) return bet;
       if (!bet || bet.status !== 'active') throw new ConflictError('Bet already settled');
-      const [round] = await tx
-        .select()
-        .from(schema.rounds)
-        .where(eq(schema.rounds.id, bet.roundId));
-      const [config] = await tx
-        .select()
-        .from(schema.configurations)
-        .where(eq(schema.configurations.version, round.configVersion));
-      const baseWin = Number((BigInt(bet.amount) * BigInt(Math.round(multiplier * 100))) / 100n);
-      const outcome = evaluateBonus(
-        { serverSeed: round.serverSeed, nonce: round.nonce },
-        { amount: bet.amount, baseWin },
-        config.snapshot,
-      );
       const [saved] = await tx
         .update(schema.bets)
         .set({
@@ -173,7 +182,7 @@ export class Store {
     });
   }
 
-  async markLost(ids: string[]) {
+  async markLost(ids: string[], outcome: Outcome) {
     for (const id of ids)
       await this.db.transaction(async (tx) => {
         const [bet] = await tx
@@ -182,19 +191,6 @@ export class Store {
           .where(eq(schema.bets.id, id))
           .for('update');
         if (!bet || bet.status !== 'active') return;
-        const [round] = await tx
-          .select()
-          .from(schema.rounds)
-          .where(eq(schema.rounds.id, bet.roundId));
-        const [config] = await tx
-          .select()
-          .from(schema.configurations)
-          .where(eq(schema.configurations.version, round.configVersion));
-        const outcome = evaluateBonus(
-          { serverSeed: round.serverSeed, nonce: round.nonce },
-          { amount: bet.amount, baseWin: 0 },
-          config.snapshot,
-        );
         await tx
           .update(schema.bets)
           .set({ status: 'lost', payout: 0, outcome })

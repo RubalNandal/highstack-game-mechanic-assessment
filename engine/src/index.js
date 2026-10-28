@@ -5,29 +5,23 @@ import { startGame, stopGame, fatal } from './game.js';
 import { createHttpServer } from './http.js';
 import { log } from './log.js';
 import { attachStream } from './stream.js';
-import { store } from './runtime.js';
+import { operator } from './operator.js';
 
-await store.migrate();
-await store.seedPlayer();
-const lease = await store.pool.connect();
-const lock = await lease.query('SELECT pg_try_advisory_lock(487322) AS owned');
-if (!lock.rows[0].owned) throw new Error('Another engine already owns the round clock');
-lease.on('error', fatal);
-await store.recoverInterrupted();
+await operator.start();
+const heartbeat = setInterval(() => operator.heartbeat().catch(fatal), 3000);
+await recoverPayments();
 const server = createHttpServer();
 attachStream(server);
 await startGame({ onMultiplier: runAutoCashouts, onCrash: settleLostBets });
 server.listen(config.port, () =>
   log.info('crashsim listening', { port: config.port, ...activeFaults() }),
 );
-const worker = setInterval(() => recoverPayments().catch(fatal), 1000);
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.on(signal, async () => {
     stopGame();
-    clearInterval(worker);
+    clearInterval(heartbeat);
     server.close();
-    lease.release();
-    await store.close();
+    await operator.stop().catch(() => {});
     process.exit(0);
   });
 }

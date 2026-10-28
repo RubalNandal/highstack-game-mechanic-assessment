@@ -13,7 +13,6 @@
   },
   "dependencies": {
     "ws": "^8.18.0",
-    "@highstack/bonus": "*",
-    "@highstack/storage": "*"
+    "@highstack/bonus": "*"
   }
 }

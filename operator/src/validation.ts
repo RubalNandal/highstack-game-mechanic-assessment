@@ -43,6 +43,26 @@ export const BetSchema = v.strictObject({
     ),
   ),
 });
+export const EngineBetSchema = v.strictObject({ ...BetSchema.entries, playerId: id });
+export const NewRoundSchema = v.strictObject({
+  roundId: v.pipe(v.string(), v.uuid()),
+  serverSeed: v.pipe(v.string(), v.regex(/^[a-f0-9]{64}$/)),
+});
+export const OutcomeSchema = v.strictObject({
+  triggered: v.boolean(),
+  multiplier: v.pipe(v.number(), v.minValue(0.01), v.maxValue(1_000_000)),
+  baseWin: amount,
+  finalWin: amount,
+  capped: v.boolean(),
+  configVersion: id,
+});
+export const SettlementSchema = v.strictObject({
+  multiplier: v.pipe(
+    v.number(), v.minValue(1), v.maxValue(1_000_000),
+    v.check((n) => Math.abs(n * 100 - Math.round(n * 100)) < 1e-8),
+  ),
+  outcome: OutcomeSchema,
+});
 const roundId = v.pipe(v.string(), v.uuid());
 const roundEvent = v.variant('type', [
   v.object({
