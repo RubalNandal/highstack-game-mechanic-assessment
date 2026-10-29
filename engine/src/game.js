@@ -1,3 +1,7 @@
+/**
+ * Run the supplied crash game's betting, running and crashed phases.
+ * Save round inputs through the operator, invoke bet callbacks, and reveal the seed only after play.
+ */
 import { randomUUID } from 'node:crypto';
 import { config } from './config.js';
 import { crashPoint, msToReach, multiplierAt, newServerSeed, sha256Hex, toCents } from './fair.js';
@@ -15,6 +19,10 @@ export function getRound() {
   return round;
 }
 
+/**
+ * Return the public round view used by the operator and website.
+ * Keep the seed and future crash point private until the round ends, or players could predict it.
+ */
 export function roundSnapshot() {
   if (!round) return { state: 'starting', seq: currentSeq() };
   const snapshot = {
@@ -38,6 +46,10 @@ export function roundSnapshot() {
   return snapshot;
 }
 
+/**
+ * Startup supplies the automatic-cash-out and loss handlers as callbacks.
+ * Store them and open the first round; the clock invokes them at the appropriate game phase.
+ */
 export async function startGame(roundHooks) {
   hooks = roundHooks;
   await startBetting();
@@ -46,6 +58,10 @@ export function stopGame() {
   stopped = true;
   clearTimeout(timer);
 }
+/**
+ * Stop the game after an unresolved operator request instead of continuing with uncertain records.
+ * Restart handling can then recover from the operator's saved facts.
+ */
 export function fatal(error) {
   log.error('engine stopped to preserve recoverable state', {
     error: error.stack ?? error.message,
@@ -57,6 +73,10 @@ export function fatal(error) {
 function schedule(fn, delay) {
   if (!stopped) timer = setTimeout(() => fn().catch(fatal), delay);
 }
+/**
+ * Create a round and wait for its seed, generated nonce and original config to be saved.
+ * Only then announce betting, so later settlement and replay have durable inputs.
+ */
 async function startBetting() {
   const id = randomUUID(),
     serverSeed = newServerSeed();
@@ -76,6 +96,8 @@ async function startBetting() {
     heldTicks: [],
     holdLastTicks: 0,
   };
+  // A 1-cent dummy stake and zero base win obtain only the round's trigger/factor.
+  // Real settlements use the same round inputs, so this does not reroll the choice or pay money.
   const decision = evaluateBonus(
     { serverSeed, nonce: saved.nonce },
     { amount: 1, baseWin: 0 },
@@ -104,6 +126,10 @@ async function startRunning() {
   if (toCents(round.crashPoint) <= 100) return crash();
   schedule(tick, config.tickMs);
 }
+/**
+ * Advance from elapsed time, send a display update, and check reached automatic targets.
+ * Compare against the crash point before allowing this tick's cash-outs.
+ */
 async function tick() {
   const t = Date.now() - round.startedAt;
   const multiplier = multiplierAt(t);
@@ -116,8 +142,12 @@ async function tick() {
   await hooks.onMultiplier(round.id, toCents(multiplier));
   schedule(tick, config.tickMs);
 }
+/**
+ * Close manual cash-outs, settle automatic targets strictly below the crash point, then mark losses.
+ * Save the ended round before revealing its seed and scheduling the next one.
+ */
 async function crash() {
-  // Close manual cash-outs before awaiting automatic settlement/database work.
+  // Close manual cash-outs before waiting for automatic settlement and operator record updates.
   round.state = 'crashed';
   await hooks.onMultiplier(round.id, toCents(round.crashPoint) - 1);
   await hooks.onCrash(round.id);

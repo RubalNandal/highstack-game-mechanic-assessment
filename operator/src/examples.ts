@@ -1,6 +1,13 @@
+/**
+ * Prepare read-only UI examples with the same bonus module used for live results.
+ * These searched inputs illustrate branches; they are not bets or evidence of outcome frequencies.
+ */
 import { evaluateBonus, type BonusConfig } from '@highstack/bonus';
 
-/** Examples use the real module and config; this function has no wallet access. */
+/**
+ * At app startup, search up to 10,000 fixed nonces for available factor/no-bonus/cap examples.
+ * Return the inputs and real outcomes for cards; rare cases may be absent and no money is moved.
+ */
 export function makeExamples(config: BonusConfig) {
   const examples = new Map<string, object>();
   const targets = new Set(

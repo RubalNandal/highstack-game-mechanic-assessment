@@ -1,12 +1,22 @@
+/**
+ * The supplied crash-point mathematics, seed fingerprints and game timing helpers.
+ * These decide the base game's crash and multiplier; bonus selection lives in packages/bonus.
+ */
 import { createHash, createHmac, randomBytes } from 'node:crypto';
 
 const E = 2n ** 52n;
 const GROWTH_PER_MS = 0.00006;
 
+/**
+ * Generate a fresh secret once per round. Saving it lets later checks repeat the calculation.
+ */
 export function newServerSeed() {
   return randomBytes(32).toString('hex');
 }
 
+/**
+ * Fingerprint the seed text before play; after reveal, the same text must produce this hash.
+ */
 export function sha256Hex(text) {
   return createHash('sha256').update(text, 'utf8').digest('hex');
 }
@@ -19,6 +29,9 @@ export function crashPointFromHex(hex) {
   return Number(cents) / 100;
 }
 
+/**
+ * Derive the round's crash point from its secret seed and ID using the retained starter formula.
+ */
 export function crashPoint(serverSeed, roundId) {
   const hex = createHmac('sha256', serverSeed).update(roundId, 'utf8').digest('hex');
   return crashPointFromHex(hex);

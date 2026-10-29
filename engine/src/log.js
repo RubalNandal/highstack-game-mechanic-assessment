@@ -1,3 +1,7 @@
+/**
+ * Write structured server logs at the configured severity level.
+ * Logging describes what happened; it does not decide results or change saved records.
+ */
 import { config } from './config.js';
 
 const LEVELS = { debug: 10, info: 20, warn: 30, error: 40 };

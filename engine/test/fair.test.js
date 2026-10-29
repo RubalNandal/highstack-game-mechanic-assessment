@@ -3,7 +3,10 @@ import { test } from 'node:test';
 import { crashPoint, crashPointFromHex, multiplierAt, sha256Hex } from '../src/fair.js';
 
 test('serverSeedHash is sha256 of the seed text', () => {
-  assert.equal(sha256Hex('seed-1'), '0eb026731d9ea3f870511f8c18daeb814eaa2c9e276082b204f2a962212fb5bd');
+  assert.equal(
+    sha256Hex('seed-1'),
+    '0eb026731d9ea3f870511f8c18daeb814eaa2c9e276082b204f2a962212fb5bd',
+  );
 });
 
 test('crash point matches a known vector', () => {

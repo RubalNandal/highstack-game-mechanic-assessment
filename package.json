@@ -14,14 +14,17 @@
     "test": "npm run build:server && node --import tsx --test engine/test/*.test.js packages/bonus/test/*.test.ts",
     "test:integration": "npm run build:server && node --import tsx --test packages/storage/test/*.test.ts",
     "start": "node operator/dist/index.js",
-    "test:smoke": "node scripts/smoke.mjs"
+    "test:smoke": "node scripts/smoke.mjs",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
   },
   "engines": {
     "node": ">=22"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
-    "typescript": "~5.9.0",
-    "tsx": "^4.20.0"
+    "prettier": "3.9.10",
+    "tsx": "^4.20.0",
+    "typescript": "~5.9.0"
   }
 }

@@ -1,9 +1,17 @@
+/**
+ * The supplied wallet sender: request stake debits or payout credits from the operator.
+ * This file sends and retries HTTP; the operator checks receipts and changes the actual balance.
+ */
 import { createHmac } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { config } from './config.js';
 import { faults } from './faults.js';
 import { log } from './log.js';
 
+/**
+ * Sign the timestamp and exact JSON text that the operator will receive.
+ * Re-serialising or changing that text after signing would invalidate the signature.
+ */
 export function sign(secret, timestamp, rawBody) {
   return createHmac('sha256', secret).update(`${timestamp}.${rawBody}`).digest('hex');
 }
@@ -31,8 +39,9 @@ async function attempt(url, rawBody) {
 }
 
 /**
- * Sends one wallet call. Resolves to
- *   { kind: 'ok', balance } | { kind: 'declined' } | { kind: 'failed', reason }
+ * Deliver a saved debit/credit, retrying timeouts and temporary server failures.
+ * Reuse the same payload/txId: a missing response does not mean money was untouched.
+ * Return ok for confirmation, declined for insufficient stake funds, or failed when unresolved.
  */
 async function deliver(kind, payload) {
   const url = `${config.operatorUrl}/wallet/${kind}`;
@@ -48,7 +57,10 @@ async function deliver(kind, payload) {
       if (status === 402 && kind === 'debit') return { kind: 'declined' };
       if (status < 500) return { kind: 'failed', reason: `status ${status}` };
     } catch (err) {
-      log.info('webhook attempt', { ...fields, error: err.name === 'TimeoutError' ? 'timeout' : err.message });
+      log.info('webhook attempt', {
+        ...fields,
+        error: err.name === 'TimeoutError' ? 'timeout' : err.message,
+      });
     }
     if (i < delays.length) await sleep(delays[i]);
   }

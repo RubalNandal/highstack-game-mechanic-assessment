@@ -1,147 +1,280 @@
-# HighStack — Game Mechanic Assessment
+# HighStack - Configurable bonus mechanic
 
-A deterministic, configurable bonus added to the supplied crash game. It includes the missing wallet receiver and player client, persistent round replay, and tests for the mechanic and money handling. The original brief shipped with the starter is preserved in [docs/STARTER_README.md](docs/STARTER_README.md).
+A configurable bonus added to a crash game. Each round draws whether the bonus triggers and, if it does, selects a weighted multiplier. The multiplier applies to the player's winnings, up to a configured cap. Results and payments are saved, and the bonus can be replayed from the original inputs.
 
-## Run and demonstrate
+The demo uses a **50% bonus chance** to make the mechanic easy to see. A losing bet still pays zero.
+
+## Run with Docker
 
 ```sh
 docker compose up --build
 ```
 
-Open **http://localhost:3100**. The demo player starts with **$1,000.00**. Place a bet during the five-second betting window, then cash out manually or set an automatic target. The final result shows base winnings, bonus, cap and payment status. After the round ends, select **Replay** to verify the saved outcome.
+Open **http://localhost:3100**. The demo player starts with $1,000. Place a bet before the round starts, then cash out manually or set an automatic target. Results show the bonus, multiplier, final payout and payment status. Replay is available after the round ends. Balances survive restarts.
 
-The example cards demonstrate no bonus, configured multipliers and the win cap using the same calculation as live play. They never alter the wallet. A bonus occurs with the configured probability in live rounds, so examples make every branch easy to inspect.
+## Run without Docker
 
-Postgres data survives normal restarts. Seeding never resets an existing balance. Only the demo website is published to localhost. Postgres and the engine have no published ports. To change the website port, set `DEMO_PORT` in `.env` using `.env.example`.
+Requires Node 22+ and a running local PostgreSQL 16+ server. Run these commands from the repository root; your local PostgreSQL user must be able to create databases.
 
-## Verify
+```sh
+npm ci
+npm run build
+createdb highstack
+```
 
-There are three added assessment tests: deterministic bonus/cap/config validation, zero chance and weighted multipliers, and a basic wallet payout/replay check that also rejects overspending and duplicate credit. The starter's six original tests are retained.
+Start the operator and client:
 
-Run these with an isolated test database:
+```sh
+DATABASE_URL=postgres://localhost:5432/highstack npm start
+```
+
+In another terminal, start the engine:
+
+```sh
+node engine/src/index.js
+```
+
+Open **http://localhost:3000**. The operator applies migrations, creates the demo player if needed and serves the built React client.
+
+## Main decisions
+
+- **The engine has no direct database access.** Only the operator connects to Postgres. The engine has no database credentials or database driver, and Docker places Postgres on a separate network. We made this boundary so future game engines, including code written by AI agents, cannot directly read or change casino tables. Game code requests defined operations through the operator instead.
+- **All client communication goes through the operator.** It owns player identity, request validation and wallet operations, and forwards game actions to the engine. This keeps server credentials out of the browser and gives us one place to control access.
+- **Mechanics are reusable packages.** The bonus accepts a seed, bet and config, and returns an outcome. It knows nothing about the crash game, database or wallet. Another game can supply its own winnings and reuse it. Tests can pass fixed seeds, bets and configs to exercise different outcomes. Further mechanics can follow the same package structure.
+- **Wallet changes are atomic.** The payment record, balance update and paid status are saved in one database transaction: either all commit or none do. The wallet is locked while checking funds, so simultaneous requests cannot spend the same balance. A unique payment ID prevents a repeated request from paying twice.
+- **Random outcomes can be reproduced.** The seed, round number and config determine the bonus. We save those inputs and the config version so replay uses the original settings even after configuration changes.
+- **Interrupted rounds are cancelled rather than resumed from an uncertain state.** When the engine restarts, accepted bets without a saved result are refunded. Already-saved wins retain their payout and are retried. This keeps restart behavior simple and preserves recorded outcomes.
+
+## Architecture and communication
+
+```mermaid
+flowchart LR
+    C["React client"]
+    O["Operator"]
+    E["Game engine"]
+    D[("Postgres")]
+    C -->|"HTTP player requests"| O
+    O -->|"SSE live updates"| C
+    O -->|"Authenticated game requests"| E
+    E -->|"WebSocket game events"| O
+    E -->|"Signed record and payment requests"| O
+    O -->|"Database queries and transactions"| D
+```
+
+The engine runs the round and calculates the winnings. The operator stores the result and handles payment. The bonus package is imported by the engine for live outcomes and by the operator for replay and demo examples; it is not a separate service.
+
+A successful bet and cash-out follow this sequence:
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant O as Operator
+    participant E as Engine
+    participant D as Postgres
+    C->>O: Place bet with a stable bet ID
+    O->>E: Forward bet using a player session
+    E->>O: Save pending bet
+    O->>D: Insert bet and payment IDs
+    E->>O: Request stake debit
+    O->>D: Commit debit and payment receipt together
+    O-->>E: Confirm debit
+    E->>O: Record accepted bet
+    E-->>O: Bet accepted
+    O-->>C: Bet accepted
+    Note over C,E: Manual cash-out or automatic target reached
+    opt Manual cash-out
+        C->>O: Request cash-out
+        O->>E: Forward cash-out
+    end
+    E->>E: Calculate base winnings and bonus
+    E->>O: Save final outcome
+    O->>D: Store outcome and pending payout
+    E->>O: Request credit for the saved payout
+    O->>D: Commit credit, receipt and paid status together
+    O-->>E: Confirm payment
+    E-->>O: Result event
+    O-->>C: Notify client to refresh result and balance
+```
+
+Saving the outcome and paying it are separate steps. If the process stops between them, the recorded payout remains available to retry. Replay reads the saved seed, round number, bet and config, recalculates the bonus and compares the result. It never makes another payment.
+
+## Data model
+
+```mermaid
+erDiagram
+    CONFIGURATIONS ||--o{ ROUNDS : config_version
+    ROUNDS ||--o{ BETS : round_id
+    WALLETS ||--o{ BETS : player_id
+    BETS ||--o{ WALLET_TRANSACTIONS : bet_id
+    WALLETS ||--o{ WALLET_TRANSACTIONS : player_id
+    CONFIGURATIONS {
+        text version PK
+        text hash
+        jsonb snapshot
+    }
+    ROUNDS {
+        text id PK
+        integer nonce
+        text server_seed
+        text config_version FK
+        text state
+    }
+    BETS {
+        text id PK
+        text round_id FK
+        text player_id FK
+        bigint amount
+        jsonb outcome
+        bigint payout
+        text payout_status
+    }
+    WALLETS {
+        text player_id PK
+        bigint balance
+    }
+    WALLET_TRANSACTIONS {
+        text tx_id PK
+        text bet_id FK
+        text player_id FK
+        text kind
+        bigint amount
+        bigint balance
+    }
+```
+
+The diagram shows the main fields. Each bet has one debit ID and one credit ID. Database constraints prevent negative balances and more than one receipt for the same bet and payment type. Money is stored in cents; multiplication uses integer arithmetic and rounds fractional cents down.
+
+## Repository structure
+
+```text
+.
+├── client/
+│   └── src/                 React betting screen, results and replay
+├── engine/
+│   ├── src/                 Round loop, game outcomes and wallet requests
+│   └── test/                Original engine tests
+├── operator/
+│   └── src/                 Player API, engine API and payment receiver
+├── packages/
+│   ├── bonus/
+│   │   ├── src/             Bonus calculation and config validation
+│   │   └── test/            Mechanic tests
+│   └── storage/
+│       ├── src/             Database schema, transactions and replay
+│       ├── migrations/      Database migrations
+│       └── test/            Wallet integration test
+├── configs/
+│   └── bonus.json           Bonus settings
+├── scripts/
+│   └── smoke.mjs            Live bet and replay check
+├── docker-compose.yml
+├── Dockerfile
+├── package.json
+└── README.md
+```
+
+## Change the bonus configuration
+
+Edit [configs/bonus.json](configs/bonus.json). The demo settings are:
+
+```json
+{
+  "version": "bonus-demo-v2",
+  "triggerChance": 0.5,
+  "multipliers": [
+    { "multiplier": 2, "weight": 60 },
+    { "multiplier": 5, "weight": 30 },
+    { "multiplier": 10, "weight": 10 }
+  ],
+  "maxWin": 100000
+}
+```
+
+| Setting | Meaning |
+| --- | --- |
+| `version` | Identifies these exact settings. Use a new value whenever the contents change. |
+| `triggerChance` | Probability per round: `0.5` is 50%, `0` disables the bonus, `1` always triggers. |
+| `multipliers` | Factors and their relative weights after a trigger. Here 2x, 5x and 10x have 60%, 30% and 10% shares. |
+| `maxWin` | Maximum total payout in cents. `100000` is $1,000. |
+
+To add another multiplier, add a row such as `{ "multiplier": 20, "weight": 5 }` and change the version. No code changes are needed. Weights need not total 100; each row's share is its weight divided by the total.
+
+The operator validates the file when a new round is created and stores the settings used. Existing rounds and their replays keep the old settings. Different contents under an existing version are rejected. Invalid settings stop new rounds rather than silently using defaults. Example cards load when the operator process starts; restart it to refresh those cards after a config change.
+
+For example, a $10 bet cashed out at 2x gives $20 in base winnings. A 5x bonus makes the total payout $100. If the configured cap is $50, the payout is $50. The original stake is already included in the base win and is not added again. The cap also applies when no bonus triggers.
+
+### Add new configuration fields
+
+The schema deliberately rejects unknown fields. For a new setting, add its validation and behavior in [packages/bonus/src/index.ts](packages/bonus/src/index.ts), add tests, then put it in the JSON with a new version. Keep older settings supported, or retain a version-specific implementation, so saved rounds can still replay.
+
+## Add another mechanic
+
+1. **Create a package**, for example `packages/free-spins`, following `packages/bonus`. Give it its own calculation, validated config and tests. Accept ordinary data such as seed, bet and config; keep game logic, HTTP and database access outside it.
+2. **Add its configuration**, for example `configs/free-spins.json`. Extend the config loading in `operator/src/index.ts` and round preparation in `operator/src/engine.ts` so each round receives and saves the required settings.
+3. **Connect it to the game.** Add the package dependency and call it from `engine/src/settlement.js`. Update `engine/src/game.js` if the mechanic needs a round-level decision. The engine supplies game-specific inputs; the package stays reusable.
+4. **Save and replay the right rule.** Record a mechanic identifier as well as its config version, and dispatch replay to that implementation in `packages/storage/src/index.ts`. Add a migration and update outcome validation if the stored result changes. Keep old implementations available for old rounds.
+5. **Expose the result and test it.** Extend `operator/src/examples.ts` and `client/src/main.tsx` for the new result. Add the package to the server build and test commands in `package.json`.
+
+For another game engine, import the same package and supply that game's bet and base winnings. Its integration handles saving and payment. The package does not need to know which game called it.
+
+The current implementation has one mechanic; adding another requires these integration steps. The wallet path can stay the same when the new mechanic still produces one final payout amount.
+
+## Failure handling and known limits
+
+| Situation | What happens |
+| --- | --- |
+| Duplicate payment or lost response | Retrying the same payment ID returns the saved receipt without moving money again. Reusing the ID with different details is rejected. |
+| Two requests spend the same balance | A database row lock makes them check funds in turn. Insufficient funds return 402 without deducting money. |
+| Database error during a wallet payment | The balance, receipt and paid status are in one transaction. All are saved together, or the transaction is rolled back. |
+| Debit finishes after betting closes | The engine checks the round again before accepting the bet. A debited stake that can no longer be accepted is refunded. |
+| Invalid config or changed contents under an old version | Rejected. Correct the config; restart affected services if they stopped. |
+
+Production login, multiple currencies, distributed engine failover and database disaster recovery are not implemented. The operator trusts authenticated game results; replay checks the bonus using saved base winnings, not the original cash-out timing. The official bonus seed/outcome examples mentioned in the assignment were not supplied, so compatibility with those examples has not been checked.
+
+## Code formatting
+
+Prettier keeps code indentation and layout consistent, using two spaces.
+
+```sh
+npm run format        # Format the code
+npm run format:check  # Check formatting without changing files
+```
+
+VS Code and Cursor users can install the recommended Prettier extension to format on save. Generated files, lockfiles and documentation are excluded from formatting.
+
+## Run tests
+
+Unit tests:
+
+```sh
+npm test
+```
+
+Unit and database tests with Docker:
 
 ```sh
 docker compose --profile test run --build --rm tests
 ```
 
-With the demo running, Node 22+ can exercise a live bet, duplicate request, wallet balance and replay:
+Database tests without Docker, using a separate test database:
+
+```sh
+createdb highstack_test
+TEST_DATABASE_URL=postgres://localhost:5432/highstack_test npm run test:integration
+```
+
+Live smoke test against the running demo; places a $1 demo bet:
 
 ```sh
 npm run test:smoke
+# Without Docker:
+DEMO_URL=http://localhost:3000 npm run test:smoke
 ```
 
-Use an idle demo so other bets do not change the balance during this check. Set `MANUAL_CASHOUT=1` to also check that a successful cash-out returns payment status `paid`. Set `DEMO_URL` if you changed the port.
+## How we used AI
 
-For host unit tests: `npm ci && npm test`. Host database tests require a dedicated `TEST_DATABASE_URL` and `npm run test:integration`; never point this at a production database.
+We used OpenAI Codex to plan the implementation, write code quickly and create a working engine/client prototype for testing. It also helped with tests, code review and documentation.
 
-## What was there and what we added
+The first design did not separate responsibilities well enough: it allowed direct client-to-engine communication and direct database access from the engine. It also needed a clearer plan for adding and reusing mechanics. During review, we changed the design so the operator owns database access and all client communication passes through it. We separated the bonus into a package that can be tested independently and reused by different game engines.
 
-### Already in the starter
-
-The `engine` ran the crash game: betting, multiplier growth, cash-outs, seed verification and live events. It could send signed debit/credit requests to a wallet service. Docker also started Postgres, but the starter had no receiving wallet service, player website or saved round history.
-
-### Added for this assessment
-
-| Location | What it does |
-| --- | --- |
-| `packages/bonus` | Calculates the bonus trigger, weighted multiplier and capped winnings. Validates its config. Another game can reuse it. |
-| `configs/bonus.json` | Holds the editable bonus chance, multiplier table, win cap and version. |
-| `packages/storage` | The operator's database code for configs, rounds, bets, balances and payment receipts. Includes tables and migrations. |
-| `engine/src` changes | Calculate bonus outcomes, ask the operator to save records, and immediately request the wallet credit at cash-out. Recover unfinished payments once at startup. |
-| `operator/src` | The server between the website, engine and database. Owns all database access, saves engine results, handles money and forwards live updates. |
-| `client/src` | Small React website for betting, cash-out, bonus results, examples and replay. |
-| Tests and Docker setup | Check the mechanic and money handling, and start the complete demo together. |
-
-A **package** is a named group of reusable code. Both applications import the bonus calculation. Only the operator imports storage.
-
-The original engine stays in JavaScript; new operator code uses TypeScript. The bonus calculation is separate from database and HTTP code.
-
-The browser uses only the operator API. It cannot choose a player, submit a payout or obtain the operator key. This is deliberately one seeded demo identity; it is not production authentication.
-
-The browser creates a `betId` before submitting a bet and keeps that same ID for retries. The operator forwards it to the engine. After checking the round, the engine asks the operator to save it as `bets.id`; responses call it `betId`. Wallet operations use `debit:<betId>` and `credit:<betId>` so a repeated payment can be recognised. The starter's separate `sessionId` still identifies the player to the engine when creating the bet.
-
-## Communication and database ownership
-
-The communication is **client ↔ operator ↔ engine**. Only the operator connects to the database. The engine decides game actions and calculates outcomes; it asks the operator to save them and handle money.
-
-```mermaid
-flowchart LR
-    Client["Client"] <-->|"Player actions and updates"| Operator["Operator / casino"]
-    Operator <-->|"Game requests, saved state and wallet calls"| Engine["Engine"]
-    Operator <-->|"Database queries"| DB[(Postgres)]
-```
-
-This keeps the casino's database behind its own API. A replacement engine or a future StackStudio game variant uses that API without database credentials or knowledge of the tables. The casino can also replace the operator's database implementation while keeping that API; this demo uses Postgres. A third-party provider needs a compatible integration or an adapter in the operator; arbitrary providers are not automatically interchangeable.
-
-For a $10 bet B1, the engine first asks the operator to save B1 as pending. It then asks for the $10 debit. At cash-out, it calculates the base winnings and bonus together and sends one final outcome. The operator authenticates the request, validates the fields and checks that B1 can be settled. It saves the engine's result and pending payment in one transaction, without recalculating the game rules. The engine immediately requests the credit through the existing wallet path and returns the confirmed payment status. There is no periodic payment worker or pending-payment lookup in a successful cash-out. This keeps the game calculation in the engine and money handling in the operator. Read-only replay can recalculate a saved result without paying it again.
-
-Engine-to-operator `/engine/*` requests are signed over their timestamp, HTTP method, path, engine ID and exact body. The API accepts specific actions: start/heartbeat/stop, save a round or bet, update its state, record a win/loss and list pending payments. It exposes no SQL or general table access. The operator keeps the database clock lock for the active engine. Every three seconds the engine sends a heartbeat, a small "still running" request, which renews its 15-second permission. Another engine cannot take over while it is active. Repeated requests reuse their original IDs and results.
-
-The engine has its own runtime image, with game code and the bonus package. It has no database URL, storage package or Postgres driver. Its Docker network reaches the operator but is separate from the database network. The operator alone reads the config file and runs migrations. This boundary assumes game variants change engine code while the casino controls the operator and deployment configuration. Engine integrations remain authorised callers; database isolation does not independently prove that game timing is correct.
-
-## Rules and deterministic calculation
-
-`evaluateBonus(seed, bet, config)` takes:
-
-- Seed: `{ serverSeed, nonce }`.
-- Bet: `{ amount, baseWin }`, in integer minor units.
-- Config: `{ version, triggerChance, multipliers, maxWin }`.
-
-It returns `triggered`, `multiplier`, `baseWin`, `finalWin`, `capped` and `configVersion`. The same complete inputs reproduce the same outcome. All bets in one round share the same bonus decision. A losing bet has zero base winnings and stays zero.
-
-The trigger uses millionths of probability. Multipliers support two decimals; weights are non-negative integers with a positive, safe-integer total. Independent HMAC-SHA256 draws use the server seed as a UTF-8 key and JSON text `["bonus-v1", nonce, version, label, counter]` as the message. Labels are `trigger` and `multiplier`. Rejection sampling maps the 256-bit value into each integer range without modulo bias.
-
-Base cash-out winnings are floored first, following the starter. Bonus multiplication uses `BigInt` hundredths, floors once, then caps the **total payout**, including when the bonus does not trigger. The cap includes the stake already present in the base payout; it is not an additional-profit cap. Balances and API money remain safe integers, not floating-point currency.
-
-Every round saves its seed, nonce and immutable config version before betting opens. Settlement saves the bet, base winnings, selected multiplier and final result. Replay loads those inputs and checks the same function against the saved outcome. Seeds stay private until the round ends, preserving the starter's hash commitment. Replay cannot issue payments.
-
-The promised official bonus seed examples were not supplied. The project-owned regression vector uses seed `assessment-example`, nonce `0`, version `test-v1`, chance `1`, weights `60/30/10` for `2x/5x/10x`, stake `100`, base win `200` and cap `100000`: the selected bonus is `5x`, final win `1000`. This is documented implementation behaviour, not a claim to match unavailable official vectors.
-
-## Change config
-
-Edit [configs/bonus.json](configs/bonus.json). For example, change `triggerChance` to `0.1`, alter table weights or set `maxWin` to `50000`. **Give changed content a new version**, such as `bonus-v2`.
-
-The operator reads and validates the config when the engine requests a new round. It saves the version and returns those settings and the generated nonce to the engine. The bonus module freezes the settings it uses. An existing round and its replay retain the original snapshot. The operator's example cards are cached at startup; restarting it refreshes them, and the engine reconnects and recovers interrupted work.
-
-Values such as chance `1.2`, a negative weight, an empty/all-zero table or fractional `maxWin` are rejected. Reusing a version for different content is rejected. Invalid config stops new play with a visible connection error and server log; it is never silently replaced. Fix the file and restart the affected service.
-
-## Add another mechanic
-
-Another game can import the existing module directly:
-
-```ts
-const outcome = evaluateBonus(
-  { serverSeed, nonce },
-  { amount: stakeInCents, baseWin: baseWinInCents },
-  validatedConfig,
-);
-// Persist outcome; send outcome.finalWin through that game's wallet path.
-```
-
-For a different rule, add a pure function with the same explicit input/output boundary and its own validated config. Update engine settlement (`calculateOutcome`) and round reveal (`game.js`), plus the read-only replay and example calculations. Record the new config/rule version and test deterministic results and the new rule's edges. If the outcome fields stay the same, the operator's settlement and wallet code need no game-rule changes. Database queries stay in the operator; wallet signatures and payment confirmation remain separate from game mathematics.
-
-## Money and failure modes
-
-Wallet requests authenticate the exact body bytes with HMAC and a timestamp within 60 seconds. Amounts must match a recorded bet and its canonical transaction ID. A database transaction locks the player's wallet, checks the prior receipt, changes the balance and records the result together. A unique bet/operation pair also prevents payment under a second ID.
-
-| Situation | Behaviour |
-| --- | --- |
-| Concurrent bets / insufficient balance | Wallet row locks serialize debits. A balance cannot become negative; declined results are recorded for consistent retries. |
-| Duplicate request or lost response | Browser bet IDs and wallet transaction IDs are stable. Matching retries return the saved result; changed details are rejected. |
-| Credit endpoint unavailable | The existing wallet call retries temporary failures. If those retries are exhausted, the result stays pending. Repeating the cash-out retries the same credit; restarting the engine also recovers it. There is no continuous payment worker. |
-| Engine restarts mid-round | Accepted, unsettled stakes are refunded once. Unresolved debits are reconciled with their original IDs; already-calculated wins are still paid. |
-| Operator state request or response is lost | The engine retries the same action. Repeated round creation and settlement return the original saved result. An unresolved operator failure stops the engine, which reconnects and recovers on restart. |
-| Second or expired engine | The operator checks engine ownership and holds a database lock. An expired or different engine cannot update game records. |
-| Engine submits an invalid amount or a conflicting second result | The operator rejects unsafe, fractional or negative money values. Once a result is saved, a different result cannot replace it. |
-| Database fails during settlement | The engine stops rather than continuing from uncertain state. Recovery uses the durable records on restart. |
-| Config changes | Each round keeps its original snapshot. Reusing the version with changed content fails. |
-| Stream drops, gaps or reordered events | The server rejects stale sequence numbers and reconnects. The client reloads authoritative state and also polls. |
-| Repeated cash-outs / replay | One settlement wins; repeats cannot pay again. Replay is read-only. |
-
-The authorised engine is trusted to calculate the correct game outcome. The operator does not independently check its mathematics before paying; mechanic tests and read-only replay check the calculation. Replay can report a mismatch, but does not change a saved result or reverse a payment.
-
-Not handled as production features: real accounts/authentication, multi-currency, deposits/withdrawals, distributed engine failover, automatic database disaster recovery, regulatory certification, or adversarial load protection. Total balances above JavaScript's safe-integer bound are rejected rather than rounded; resolving such an extreme pending credit would require operator intervention. The supported demo assumes the database is durable and services are restarted after a fatal database/config error.
-
-## Validation notes
-
-Validation uncovered client state updates that failed strict null checks, an authentication test that omitted JSON content type and reached HTTP 415 before signature verification, and dependency versions flagged by `npm audit`. These were corrected through type checking, a properly formed HTTP test and patched dependencies. JSONB object-key ordering and late-debit/crash timing were also addressed during review. The mechanics and money behaviour were checked with deterministic unit tests, real Postgres transactions, Docker smoke tests and browser inspection.
+Codex helped turn that revised plan into files and functions, which sped up implementation and testing. The architecture needed explicit guidance and review; the first generated version was not treated as the finished design.

@@ -16,7 +16,7 @@ services:
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U operator -d operator"]
+      test: ['CMD-SHELL', 'pg_isready -U operator -d operator']
       interval: 2s
       timeout: 3s
       retries: 30
@@ -25,7 +25,7 @@ services:
     <<: *app
     networks: [default, game, database]
     ports:
-      - "127.0.0.1:${DEMO_PORT:-3100}:3000"
+      - '127.0.0.1:${DEMO_PORT:-3100}:3000'
     environment:
       DATABASE_URL: postgres://operator:operator@postgres:5432/operator
       ENGINE_URL: http://engine:4000
@@ -37,7 +37,13 @@ services:
       postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
       interval: 2s
       timeout: 3s
       retries: 30
@@ -50,7 +56,7 @@ services:
     image: highstack-engine:local
     networks: [game]
     restart: on-failure
-    command: ["node", "engine/src/index.js"]
+    command: ['node', 'engine/src/index.js']
     environment:
       OPERATOR_URL: http://operator:3000
       OPERATOR_KEY: ${OPERATOR_KEY:-dev-operator-key}
@@ -72,7 +78,7 @@ services:
       POSTGRES_PASSWORD: operator
       POSTGRES_DB: assessment_test
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U operator -d assessment_test"]
+      test: ['CMD-SHELL', 'pg_isready -U operator -d assessment_test']
       interval: 2s
       timeout: 3s
       retries: 30
@@ -81,7 +87,7 @@ services:
     <<: *app
     networks: [database]
     profiles: [test]
-    command: ["sh", "-c", "npm test && npm run test:integration"]
+    command: ['sh', '-c', 'npm test && npm run test:integration']
     environment:
       TEST_DATABASE_URL: postgres://operator:operator@test-db:5432/assessment_test
     depends_on:

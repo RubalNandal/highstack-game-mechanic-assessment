@@ -1,1 +1,6 @@
-{ "extends": "../tsconfig.base.json", "compilerOptions": { "rootDir": "src", "outDir": "dist" }, "references": [{ "path": "../packages/bonus" }, { "path": "../packages/storage" }], "include": ["src"] }
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": { "rootDir": "src", "outDir": "dist" },
+  "references": [{ "path": "../packages/bonus" }, { "path": "../packages/storage" }],
+  "include": ["src"]
+}

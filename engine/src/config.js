@@ -1,3 +1,7 @@
+/**
+ * Connection secrets, base-game timing and wallet retry settings for the engine.
+ * Bonus chance, factor weights and payout cap come from the operator's separate bonus config.
+ */
 export const config = {
   port: Number(process.env.PORT ?? 4000),
   operatorUrl: (process.env.OPERATOR_URL ?? 'http://localhost:3000').replace(/\/$/, ''),

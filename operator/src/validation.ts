@@ -1,3 +1,7 @@
+/**
+ * Runtime rules for player requests, wallet messages and engine responses/events.
+ * TypeScript cannot validate incoming JSON: routes call these checks before using that data.
+ */
 import * as v from 'valibot';
 
 const id = v.pipe(v.string(), v.minLength(1), v.maxLength(128));
@@ -48,6 +52,7 @@ export const NewRoundSchema = v.strictObject({
   roundId: v.pipe(v.string(), v.uuid()),
   serverSeed: v.pipe(v.string(), v.regex(/^[a-f0-9]{64}$/)),
 });
+// Check the outcome's field shapes/ranges. This does not prove the engine's mathematics is correct.
 export const OutcomeSchema = v.strictObject({
   triggered: v.boolean(),
   multiplier: v.pipe(v.number(), v.minValue(0.01), v.maxValue(1_000_000)),
@@ -58,7 +63,9 @@ export const OutcomeSchema = v.strictObject({
 });
 export const SettlementSchema = v.strictObject({
   multiplier: v.pipe(
-    v.number(), v.minValue(1), v.maxValue(1_000_000),
+    v.number(),
+    v.minValue(1),
+    v.maxValue(1_000_000),
     v.check((n) => Math.abs(n * 100 - Math.round(n * 100)) < 1e-8),
   ),
   outcome: OutcomeSchema,
@@ -102,6 +109,9 @@ export const StreamSchema = v.intersect([
   roundEvent,
 ]);
 
+/**
+ * Return checked input for a route, or reject its first validation issue as HTTP 400.
+ */
 export function parseInput<T extends v.GenericSchema>(schema: T, input: unknown): v.InferOutput<T> {
   const result = v.safeParse(schema, input);
   if (!result.success)

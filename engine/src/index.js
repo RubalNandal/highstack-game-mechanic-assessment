@@ -1,3 +1,7 @@
+/**
+ * Start the engine only after obtaining operator ownership and recovering saved payments.
+ * Then attach HTTP/live events, open the game clock and maintain ownership with heartbeats.
+ */
 import { runAutoCashouts, settleLostBets, recoverPayments } from './bets.js';
 import { config } from './config.js';
 import { activeFaults } from './faults.js';
@@ -9,6 +13,7 @@ import { operator } from './operator.js';
 
 await operator.start();
 const heartbeat = setInterval(() => operator.heartbeat().catch(fatal), 3000);
+// Finish the one-time recovery pass before accepting any bets in a new round.
 await recoverPayments();
 const server = createHttpServer();
 attachStream(server);

@@ -1,3 +1,7 @@
+/**
+ * Casino-facing HTTP app: serve the client, forward game actions and receive signed wallet requests.
+ * All database work goes through Store; game mathematics remains the engine's responsibility.
+ */
 import Fastify from 'fastify';
 import fastifyStatic from '@fastify/static';
 import { resolve } from 'node:path';
@@ -35,10 +39,15 @@ type Options = {
 };
 const PLAYER = 'demo';
 
+/**
+ * Build the operator app using a supplied Store, engine connection settings and validated bonus config.
+ * Register player, wallet and private engine routes plus the live-update bridge.
+ */
 export async function createApp(store: Store, options: Options) {
   const app = Fastify({ logger: options.logger ?? true, bodyLimit: 16 * 1024 });
   app.decorateRequest('rawBody', '');
   app.removeContentTypeParser('application/json');
+  // Signatures cover the received JSON bytes: parsing and re-serialising first could change those bytes.
   app.addContentTypeParser('application/json', { parseAs: 'string' }, (request, body, done) => {
     request.rawBody = body as string;
     try {
@@ -69,9 +78,17 @@ export async function createApp(store: Store, options: Options) {
     });
   });
 
-  registerEngineRoutes(app, store, options.webhookSecret,
-    options.loadConfig ?? (async () => options.config));
+  registerEngineRoutes(
+    app,
+    store,
+    options.webhookSecret,
+    options.loadConfig ?? (async () => options.config),
+  );
 
+  /**
+   * Forward a server-controlled action/read to the engine and validate its response shape.
+   * Keep the operator key on this server; the browser calls only our public /api routes.
+   */
   async function engine(path: string, body?: object) {
     const response = await fetch(`${options.engineUrl}${path}`, {
       method: body ? 'POST' : 'GET',
@@ -99,6 +116,7 @@ export async function createApp(store: Store, options: Options) {
     await store.balance(PLAYER);
     return { ok: true };
   });
+  // Authentication checks who sent the request; Store separately checks whether its money is owed.
   for (const kind of ['debit', 'credit'] as const) {
     app.post(`/wallet/${kind}`, async (request, reply) => {
       if (
@@ -137,6 +155,7 @@ export async function createApp(store: Store, options: Options) {
   app.post<{ Params: { id: string } }>('/api/bets/:id/cashout', async (request) => {
     const bet = await store.getBet(request.params.id);
     if (!bet || bet.playerId !== PLAYER) throw new ConflictError('Bet not found');
+    // This shortcut reads a finished result; it does not forward a retry of any pending wallet credit.
     if (bet.status === 'cashed_out')
       return { betId: bet.id, status: bet.status, payout: bet.payout };
     return engine(`/bets/${encodeURIComponent(bet.id)}/cashout`, {});
@@ -170,6 +189,10 @@ export async function createApp(store: Store, options: Options) {
     retry: NodeJS.Timeout | undefined,
     stopped = false,
     lastSeq = 0;
+  /**
+   * Bridge validated engine events to browser listeners and reconnect after disconnects.
+   * A gap or reconnect requests a state reload; saved records, not events, determine wallet money.
+   */
   function connectStream() {
     socket = new WebSocket(`${options.engineUrl.replace(/^http/, 'ws')}/stream`, {
       headers: { 'x-operator-key': options.operatorKey },

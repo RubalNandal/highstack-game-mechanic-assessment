@@ -33,11 +33,19 @@ test('zero chance disables the bonus and weights select the configured multiplie
   assert.equal(noBonus.triggered, false);
   assert.equal(noBonus.finalWin, bet.baseWin);
   // These seeds produce tickets 59, 60, 89 and 90: both sides of each table boundary.
-  for (const [nonce, multiplier] of [[183, 2], [5, 5], [201, 5], [173, 10]])
+  for (const [nonce, multiplier] of [
+    [183, 2],
+    [5, 5],
+    [201, 5],
+    [173, 10],
+  ])
     assert.equal(evaluateBonus({ ...seed, nonce }, bet, config).multiplier, multiplier);
   const zeroWeight = {
     ...config,
-    multipliers: [{ multiplier: 10, weight: 0 }, { multiplier: 2, weight: 1 }],
+    multipliers: [
+      { multiplier: 10, weight: 0 },
+      { multiplier: 2, weight: 1 },
+    ],
   };
   assert.equal(evaluateBonus(seed, bet, zeroWeight).multiplier, 2);
 });

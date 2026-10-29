@@ -1,3 +1,7 @@
+/**
+ * Start the casino/operator: prepare Postgres, preserve or create the demo wallet, and serve the API/client.
+ * Only this application constructs Store; the engine reaches it through the private operator API.
+ */
 import { readFile } from 'node:fs/promises';
 import { Store } from '@highstack/storage';
 import { parseConfig } from '@highstack/bonus';
@@ -8,6 +12,10 @@ const store = new Store(
 );
 await store.migrate();
 await store.seedPlayer();
+/**
+ * Read and validate the JSON file at startup and for each new round.
+ * Invalid JSON/settings throw; existing rounds retain their saved snapshots.
+ */
 async function loadConfig() {
   return parseConfig(
     JSON.parse(await readFile(process.env.BONUS_CONFIG_PATH ?? 'configs/bonus.json', 'utf8')),

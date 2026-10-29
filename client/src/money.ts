@@ -1,9 +1,16 @@
+/**
+ * Convert form/display money at the UI boundary; the API and saved amounts use whole cents.
+ */
 export function money(amount: number): string {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(
     amount / 100,
   );
 }
 
+/**
+ * Convert text such as 10.25 into 1025 cents, rejecting invalid precision and unsupported stakes.
+ * Split dollars/cents and use integer arithmetic instead of approximate decimal multiplication.
+ */
 export function parseStake(input: string): number {
   if (!/^\d+(\.\d{1,2})?$/.test(input.trim()))
     throw new Error('Enter a positive amount with at most two decimals.');

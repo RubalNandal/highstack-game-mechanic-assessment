@@ -12,8 +12,10 @@ after(() => store.close());
 test('a bet pays its bonus once, replays correctly and cannot overspend the wallet', async () => {
   await store.migrate();
   const config = parseConfig({
-    version: 'basic-wallet-v1', triggerChance: 1,
-    multipliers: [{ multiplier: 5, weight: 1 }], maxWin: 100_000,
+    version: 'basic-wallet-v1',
+    triggerChance: 1,
+    multipliers: [{ multiplier: 5, weight: 1 }],
+    maxWin: 100_000,
   });
   await store.saveConfig(config);
   const playerId = `test-${randomUUID()}`;
@@ -26,7 +28,8 @@ test('a bet pays its bonus once, replays correctly and cannot overspend the wall
 
   const outcome = evaluateBonus(
     { serverSeed: round.serverSeed, nonce: round.nonce },
-    { amount: 1000, baseWin: 2000 }, config,
+    { amount: 1000, baseWin: 2000 },
+    config,
   );
   const settled = await store.settleWin(bet.id, 2, outcome);
   assert.equal(settled.payout, 10_000);
@@ -38,8 +41,11 @@ test('a bet pays its bonus once, replays correctly and cannot overspend the wall
 
   const tooLarge = await store.createBet(playerId, round.id, 200_000);
   const declined = await store.applyWallet('debit', {
-    playerId, roundId: round.id, betId: tooLarge.id,
-    txId: tooLarge.debitTxId, amount: tooLarge.amount,
+    playerId,
+    roundId: round.id,
+    betId: tooLarge.id,
+    txId: tooLarge.debitTxId,
+    amount: tooLarge.amount,
   });
   assert.equal(declined.code, 402);
   assert.equal(await store.balance(playerId), 109_000);

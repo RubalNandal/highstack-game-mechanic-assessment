@@ -1,5 +1,14 @@
+/**
+ * Verify shared-secret signatures on wallet requests and private engine actions.
+ * This establishes a recent, correctly signed message; bet/payment eligibility is checked separately.
+ */
 import { createHmac, timingSafeEqual } from 'node:crypto';
 
+/**
+ * Reject malformed headers, timestamps more than 60 seconds away, and mismatched signatures.
+ * Compare valid-length signatures without timing differences based on where bytes first differ.
+ * Repeated valid messages still need the wallet's stored receipt checks to prevent double payment.
+ */
 export function verifySignature(
   secret: string,
   timestamp: unknown,

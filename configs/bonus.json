@@ -1,6 +1,6 @@
 {
-  "version": "bonus-v1",
-  "triggerChance": 0.05,
+  "version": "bonus-demo-v1",
+  "triggerChance": 0.5,
   "multipliers": [
     { "multiplier": 2, "weight": 60 },
     { "multiplier": 5, "weight": 30 },

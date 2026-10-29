@@ -1,4 +1,7 @@
-// Fault injection for testing integrations. Everything is off by default.
+/**
+ * Optional integration-test switches for deliberate duplicate payments, delays and stream faults.
+ * All are off by default; they test recovery paths rather than define game mechanics.
+ */
 
 function flag(name) {
   return process.env[name] === '1';

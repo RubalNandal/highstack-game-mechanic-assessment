@@ -1,3 +1,7 @@
+/**
+ * Small player UI: send actions to the operator and display its saved balance/outcomes.
+ * The browser does not choose payable results; example/replay dialogs only show calculations.
+ */
 import { StrictMode, useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { money, parseStake } from './money';
@@ -50,6 +54,10 @@ type Replay = {
   config: object;
   configHash: string;
 };
+/**
+ * Send a public operator read/action and return JSON or throw its HTTP error.
+ * T describes the expected TypeScript shape, not runtime validation of the response.
+ */
 async function api<T>(path: string, body?: object): Promise<T> {
   const response = await fetch(path, {
     method: body ? 'POST' : 'GET',
@@ -79,12 +87,14 @@ function App() {
     requestSequence = useRef(0),
     dialog = useRef<HTMLDialogElement>(null);
   const [points, setPoints] = useState<[number, number][]>([[0, 1]]);
+  // Save the attempted bet before sending it, so a timeout/reload can keep the original bet ID.
   const persistPending = useCallback((value: Pending | null) => {
     pendingRef.current = value;
     setPending(value);
     if (value) sessionStorage.setItem('pending-bet', JSON.stringify(value));
     else sessionStorage.removeItem('pending-bet');
   }, []);
+  // Reload authoritative balance/history. Ignore slower old replies that arrive after a newer refresh.
   const refresh = useCallback(async () => {
     const sequence = ++requestSequence.current;
     try {
@@ -169,6 +179,10 @@ function App() {
     )
     .join(' ');
 
+  /**
+   * Convert form values and submit a new or saved pending bet through the operator.
+   * Reuse the whole pending request on uncertain retries; a new ID would mean a different wager.
+   */
   async function placeBet(event: React.FormEvent) {
     event.preventDefault();
     setBusy(true);
@@ -208,6 +222,10 @@ function App() {
       setBusy(false);
     }
   }
+  /**
+   * Ask the server to cash out this bet, then reload saved state even if its response is lost.
+   * An HTTP error alone does not prove that the server failed to record or pay the result.
+   */
   async function cashOut(id: string) {
     setCashoutBusy(id);
     setMessage('');
@@ -222,6 +240,9 @@ function App() {
       setCashoutBusy(null);
     }
   }
+  /**
+   * Fetch the read-only saved/recalculated comparison and show it in the replay dialog.
+   */
   async function showReplay(id: string) {
     try {
       setReplay(await api<Replay>(`/api/replay/${id}`));

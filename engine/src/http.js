@@ -1,3 +1,7 @@
+/**
+ * Private HTTP entry points for operator-to-engine game actions and snapshots.
+ * Check the operator key and request fields, then delegate to game/bet functions.
+ */
 import { createServer } from 'node:http';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { cashout, createSession, getBet, placeBet } from './bets.js';
@@ -35,13 +39,14 @@ async function readJson(req) {
   }
 }
 
+/**
+ * Check incoming stake/target fields before the engine tries to place a bet.
+ * Amounts are integer cents; autoCashout is a factor such as 2, not multiplier hundredths.
+ */
 function parseBetRequest(body) {
   if (typeof body !== 'object' || body === null) throw invalid('body must be an object');
   const { sessionId, roundId, amount, autoCashout, betId } = body;
-  if (
-    betId !== undefined &&
-    (typeof betId !== 'string' || !/^[a-f0-9-]{36}$/i.test(betId))
-  )
+  if (betId !== undefined && (typeof betId !== 'string' || !/^[a-f0-9-]{36}$/i.test(betId)))
     throw invalid('betId must be a UUID');
   if (typeof sessionId !== 'string' || !sessionId) throw invalid('sessionId must be a string');
   if (typeof roundId !== 'string' || !roundId) throw invalid('roundId must be a string');
@@ -105,6 +110,10 @@ async function handle(req) {
   throw new HttpError(404, 'not_found');
 }
 
+/**
+ * Create the engine server and translate handler results/errors into JSON HTTP responses.
+ * Fatal operator-state errors stop the engine so startup recovery can use saved records.
+ */
 export function createHttpServer() {
   return createServer(async (req, res) => {
     const started = Date.now();

@@ -1,7 +1,13 @@
+/**
+ * Describe the operator's Postgres tables and TypeScript row shapes for Drizzle.
+ * The SQL migration also creates database constraints, such as one payment per bet/kind.
+ */
 import { bigint, integer, jsonb, pgTable, text, timestamp } from 'drizzle-orm/pg-core';
 import type { BonusConfig, Outcome } from '@highstack/bonus';
 
+// Read whole-cent bigint columns as numbers; wallet code rejects balances outside the safe integer range.
 const money = (name: string) => bigint(name, { mode: 'number' });
+// Save the actual settings as well as their name: a version alone cannot reconstruct an old draw.
 export const configurations = pgTable('configurations', {
   version: text('version').primaryKey(),
   hash: text('hash').notNull(),
@@ -21,6 +27,7 @@ export const wallets = pgTable('wallets', {
   playerId: text('player_id').primaryKey(),
   balance: money('balance').notNull(),
 });
+// A bet's game result and payment confirmation are separate: cashed_out can still owe a pending credit.
 export const bets = pgTable('bets', {
   id: text('id').primaryKey(),
   playerId: text('player_id')
@@ -40,6 +47,7 @@ export const bets = pgTable('bets', {
   payoutStatus: text('payout_status').notNull().default('none'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 });
+// Each row is a payment receipt used to answer a matching retry without moving money again.
 export const walletTransactions = pgTable('wallet_transactions', {
   txId: text('tx_id').primaryKey(),
   kind: text('kind').notNull(),

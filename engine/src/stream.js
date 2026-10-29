@@ -1,3 +1,7 @@
+/**
+ * Send numbered game events over WebSocket to the authorised operator connection.
+ * Sequence numbers help receivers spot old/missing display updates; they do not apply payments.
+ */
 import { WebSocketServer } from 'ws';
 import { config } from './config.js';
 import { faults } from './faults.js';
@@ -10,7 +14,10 @@ export function currentSeq() {
   return seq;
 }
 
-/** Creates an event with the next global sequence number. Does not send it. */
+/**
+ * Assign the next event number without sending yet; optional fault tests may hold the event.
+ * Receivers compare these numbers to detect gaps and reload authoritative state.
+ */
 export function createEvent(type, data) {
   seq += 1;
   return { type, seq, data };

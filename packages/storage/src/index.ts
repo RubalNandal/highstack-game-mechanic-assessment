@@ -1,3 +1,7 @@
+/**
+ * Operator-owned persistence for round inputs, bet results, balances and payment receipts.
+ * The engine has no database connection: it requests these operations through signed operator routes.
+ */
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
@@ -5,7 +9,13 @@ import pg from 'pg';
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
-import { configHash, evaluateBonus, parseConfig, type BonusConfig, type Outcome } from '@highstack/bonus';
+import {
+  configHash,
+  evaluateBonus,
+  parseConfig,
+  type BonusConfig,
+  type Outcome,
+} from '@highstack/bonus';
 import * as schema from './schema.js';
 
 export type StoredBet = typeof schema.bets.$inferSelect;
@@ -20,6 +30,10 @@ export class ConflictError extends Error {
   readonly statusCode = 409;
 }
 
+/**
+ * Keep the operator's reusable database pool and related operations together.
+ * Save game outcomes supplied by the engine; enforce money checks here rather than recalculating game rules.
+ */
 export class Store {
   readonly pool: pg.Pool;
   readonly db;
@@ -28,6 +42,10 @@ export class Store {
     this.db = drizzle(this.pool, { schema });
   }
 
+  /**
+   * Apply missing SQL migrations at operator startup or in database tests.
+   * The advisory lock makes concurrent startup processes apply schema changes one at a time.
+   */
   async migrate() {
     const client = await this.pool.connect();
     try {
@@ -41,6 +59,9 @@ export class Store {
     }
   }
 
+  /**
+   * Create a starting wallet only if absent. Restarting must not reset an existing balance.
+   */
   async seedPlayer(playerId = 'demo', amount = 100_000) {
     await this.db
       .insert(schema.wallets)
@@ -48,6 +69,10 @@ export class Store {
       .onConflictDoNothing();
   }
 
+  /**
+   * Validate and save the complete settings under a version before a round uses them.
+   * A matching repeat is allowed; different contents under the same version are rejected.
+   */
   async saveConfig(input: BonusConfig) {
     const config = parseConfig(input),
       hash = configHash(config);
@@ -63,6 +88,10 @@ export class Store {
     return config;
   }
 
+  /**
+   * Save the engine's round ID, seed and config version; Postgres assigns the nonce.
+   * An identical retry returns the original row/nonce rather than creating a different draw.
+   */
   async createRound(id: string, serverSeed: string, configVersion: string) {
     await this.db
       .insert(schema.rounds)
@@ -80,17 +109,27 @@ export class Store {
 
   async getConfig(version: string) {
     const [saved] = await this.db
-      .select().from(schema.configurations).where(eq(schema.configurations.version, version));
+      .select()
+      .from(schema.configurations)
+      .where(eq(schema.configurations.version, version));
     if (!saved) throw new ConflictError('Config not found');
     return parseConfig(saved.snapshot);
   }
 
   async setRoundState(id: string, state: 'running' | 'crashed') {
-    await this.db.update(schema.rounds).set({ state }).where(and(
-      eq(schema.rounds.id, id), inArray(schema.rounds.state, ['betting', 'running', state]),
-    ));
+    await this.db
+      .update(schema.rounds)
+      .set({ state })
+      .where(
+        and(eq(schema.rounds.id, id), inArray(schema.rounds.state, ['betting', 'running', state])),
+      );
   }
 
+  /**
+   * Save a stake attempt before wallet delivery, using the browser's bet ID when supplied.
+   * Create fixed debit/credit IDs from that bet ID and reject retries with changed bet details.
+   * autoCashout arrives as a factor such as 2; store it as 200 hundredths.
+   */
   async createBet(
     playerId: string,
     roundId: string,
@@ -127,6 +166,10 @@ export class Store {
     return (await this.db.select().from(schema.bets).where(eq(schema.bets.id, id)))[0];
   }
 
+  /**
+   * After confirmed stake deduction, accept a still-pending bet or prepare its stake refund.
+   * The engine supplies accepted=false if the round can no longer admit this bet.
+   */
   async confirmDebit(id: string, accepted: boolean) {
     const [bet] = await this.db
       .update(schema.bets)
@@ -144,6 +187,9 @@ export class Store {
     return bet;
   }
 
+  /**
+   * Record a definite stake decline while the bet is still pending; no refund is owed.
+   */
   async rejectDebit(id: string) {
     await this.db
       .update(schema.bets)
@@ -151,6 +197,10 @@ export class Store {
       .where(and(eq(schema.bets.id, id), eq(schema.bets.status, 'pending')));
   }
 
+  /**
+   * Return a newly accepted stake if the round ended during acceptance's HTTP wait.
+   * Record the stake as a pending credit; the engine requests that credit separately.
+   */
   async refundActive(id: string) {
     await this.db
       .update(schema.bets)
@@ -158,6 +208,11 @@ export class Store {
       .where(and(eq(schema.bets.id, id), eq(schema.bets.status, 'active')));
   }
 
+  /**
+   * Save the engine's complete cash-out result once; multiplier is the game cash-out factor.
+   * Lock this bet so overlapping attempts cannot record competing wins. Identical retries return it.
+   * payoutStatus=pending means the decided finalWin is owed but its wallet credit is not yet confirmed.
+   */
   async settleWin(id: string, multiplier: number, outcome: Outcome) {
     return this.db.transaction(async (tx) => {
       const [bet] = await tx.select().from(schema.bets).where(eq(schema.bets.id, id)).for('update');
@@ -165,7 +220,8 @@ export class Store {
         bet?.status === 'cashed_out' &&
         bet.multiplier === Math.round(multiplier * 100) &&
         isDeepStrictEqual(bet.outcome, outcome)
-      ) return bet;
+      )
+        return bet;
       if (!bet || bet.status !== 'active') throw new ConflictError('Bet already settled');
       const [saved] = await tx
         .update(schema.bets)
@@ -182,6 +238,10 @@ export class Store {
     });
   }
 
+  /**
+   * Record supplied zero-win outcomes only for still-active bets.
+   * A late loss must not overwrite a bet that already saved a cash-out result.
+   */
   async markLost(ids: string[], outcome: Outcome) {
     for (const id of ids)
       await this.db.transaction(async (tx) => {
@@ -206,7 +266,10 @@ export class Store {
     return this.db.select().from(schema.bets).where(eq(schema.bets.payoutStatus, 'pending'));
   }
 
-  /** One engine instance owns the live clock; incomplete rounds are cancelled on restart. */
+  /**
+   * A new engine cannot resume an old in-memory clock: cancel unfinished rounds and refund active stakes.
+   * Preserve already-saved wins. Startup separately reconciles pending debits and credits by their IDs.
+   */
   async recoverInterrupted() {
     await this.db.transaction(async (tx) => {
       await tx
@@ -229,8 +292,14 @@ export class Store {
     return wallet.balance;
   }
 
+  /**
+   * Apply one signed debit/credit request against its recorded bet and payment ID.
+   * Return a previous receipt for a matching retry; otherwise change balance and save a receipt together.
+   * The wallet route calls this after signature/field validation. All amounts are integer cents.
+   */
   async applyWallet(kind: 'debit' | 'credit', payload: WalletPayload) {
     return this.db.transaction(async (tx) => {
+      // Lock the wallet first: simultaneous stakes must not both spend its old balance.
       const [wallet] = await tx
         .select()
         .from(schema.wallets)
@@ -250,6 +319,7 @@ export class Store {
           previous.amount !== payload.amount
         )
           throw new ConflictError('Transaction ID reused with different data');
+        // This is the original receipt's balance, not necessarily today's balance after other bets.
         return { code: previous.code, balance: previous.balance };
       }
       const [bet] = await tx
@@ -267,6 +337,7 @@ export class Store {
         throw new ConflictError('Payment does not match the recorded bet');
       if (kind === 'debit' ? bet.status !== 'pending' : bet.payoutStatus !== 'pending')
         throw new ConflictError('Payment is not pending');
+      // A declined debit also gets a receipt, so the same request cannot change its answer on retry.
       const code = kind === 'debit' && wallet.balance < payload.amount ? 402 : 200;
       const balance =
         code === 402
@@ -274,6 +345,7 @@ export class Store {
           : wallet.balance + (kind === 'debit' ? -payload.amount : payload.amount);
       if (!Number.isSafeInteger(balance) || balance < 0)
         throw new ConflictError('Balance outside supported range');
+      // The receipt, balance and credit's paid status commit together or all roll back.
       await tx.insert(schema.walletTransactions).values({ ...payload, kind, balance, code });
       await tx
         .update(schema.wallets)
@@ -288,6 +360,10 @@ export class Store {
     });
   }
 
+  /**
+   * Provide the player's latest 20 bets and their round state/config version to the website.
+   * Leave secret seeds out of this response while rounds may still be running.
+   */
   async history(playerId: string) {
     const rows = await this.db
       .select({
@@ -303,6 +379,11 @@ export class Store {
     return rows.map(({ bet, ...rest }) => ({ ...bet, ...rest }));
   }
 
+  /**
+   * After an owned bet's round ends, load its saved seed, nonce, settings and ordinary winnings.
+   * Recalculate the bonus and compare the complete outcome; never call the wallet or change history.
+   * This checks the bonus from saved baseWin, not the correctness of the original cash-out timing.
+   */
   async replay(id: string, playerId: string) {
     const bet = await this.getBet(id);
     if (!bet || bet.playerId !== playerId) throw new ConflictError('Bet not found');

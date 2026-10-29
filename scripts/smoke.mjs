@@ -1,3 +1,7 @@
+/**
+ * Exercise the running demo through its public API using one real demo bet.
+ * Check repeated placement, the resulting balance and read-only replay; requires live services.
+ */
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';

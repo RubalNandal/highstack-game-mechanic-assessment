@@ -1,0 +1,12 @@
+**/node_modules/
+**/dist/
+**/build/
+**/coverage/
+**/*.tsbuildinfo
+**/package-lock.json
+packages/storage/migrations/
+test-results/
+playwright-report/
+LocalFile/
+docs/
+**/*.md
